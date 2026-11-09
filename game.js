@@ -315,11 +315,25 @@ const FONT5 = {};
 'A 01110,10001,10001,11111,10001,10001,10001|B 11110,10001,10001,11110,10001,10001,11110|C 01110,10001,10000,10000,10000,10001,01110|D 11110,10001,10001,10001,10001,10001,11110|E 11111,10000,10000,11110,10000,10000,11111|F 11111,10000,10000,11110,10000,10000,10000|G 01110,10001,10000,10111,10001,10001,01111|H 10001,10001,10001,11111,10001,10001,10001|I 01110,00100,00100,00100,00100,00100,01110|J 00111,00010,00010,00010,00010,10010,01100|K 10001,10010,10100,11000,10100,10010,10001|L 10000,10000,10000,10000,10000,10000,11111|M 10001,11011,10101,10101,10001,10001,10001|N 10001,11001,10101,10011,10001,10001,10001|O 01110,10001,10001,10001,10001,10001,01110|P 11110,10001,10001,11110,10000,10000,10000|Q 01110,10001,10001,10001,10101,10010,01101|R 11110,10001,10001,11110,10100,10010,10001|S 01111,10000,10000,01110,00001,00001,11110|T 11111,00100,00100,00100,00100,00100,00100|U 10001,10001,10001,10001,10001,10001,01110|V 10001,10001,10001,10001,10001,01010,00100|W 10001,10001,10001,10101,10101,11011,10001|X 10001,10001,01010,00100,01010,10001,10001|Y 10001,10001,01010,00100,00100,00100,00100|Z 11111,00001,00010,00100,01000,10000,11111'
   .split('|').forEach(g => { FONT5[g[0]] = g.slice(2).split(',').join(''); });
 
+'0 01110,10001,10011,10101,11001,10001,01110|1 00100,01100,00100,00100,00100,00100,01110|2 01110,10001,00001,00010,00100,01000,11111|3 11110,00001,00001,01110,00001,00001,11110|4 00010,00110,01010,10010,11111,00010,00010|5 11111,10000,11110,00001,00001,10001,01110|6 00110,01000,10000,11110,10001,10001,01110|7 11111,00001,00010,00100,01000,01000,01000|8 01110,10001,10001,01110,10001,10001,01110|9 01110,10001,10001,01111,00001,00010,01100|: 00000,00100,00100,00000,00100,00100,00000|! 00100,00100,00100,00100,00100,00000,00100|- 00000,00000,00000,11111,00000,00000,00000|. 00000,00000,00000,00000,00000,01100,01100'
+  .split('|').forEach(g => { FONT5[g[0]] = g.slice(2).split(',').join(''); });
+
 function drawGlyph5(ch, x, y, s, color) {
   const g = FONT5[ch];
   if (!g) return;
   ctx.fillStyle = color;
   for (let i = 0; i < 35; i++) if (g[i] === '1') ctx.fillRect(x + (i % 5) * s, y + Math.floor(i / 5) * s, s, s);
+}
+
+// Menu text in the 5x7 font (7 px tall at scale 1, 14 at scale 2). Optional outline keeps it readable over trees and snow.
+function text5Width(str, s) { return str.length * (5 * s + Math.max(1, Math.round(s * 0.6))) - Math.max(1, Math.round(s * 0.6)); }
+function drawText5(str, x, y, s, color, align, outline) {
+  str = String(str).toUpperCase();
+  const adv = 5 * s + Math.max(1, Math.round(s * 0.6)), w = text5Width(str, s);
+  const x0 = Math.round(align === 'center' ? x - w / 2 : align === 'right' ? x - w : x);
+  const draw = (ox, oy, c) => { for (let i = 0; i < str.length; i++) drawGlyph5(str[i], x0 + ox + i * adv, y + oy, s, c); };
+  if (outline) for (const [ox, oy] of [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]]) draw(ox, oy, outline);
+  draw(0, 0, color);
 }
 
 // A row of code slots: dark plates with big gold letters (a dash for the empty ones)
@@ -1386,7 +1400,7 @@ function button(label, cx, cy, w, hMul, onTap, color) {
   rect(COLORS.night, x - 1, y - 1, w + 2, h + 2);
   rect(color || COLORS.gold, x, y, w, h);
   rect(color ? COLORS.shadow : '#e6b92e', x, y + h - 2, w, 2);
-  drawText(label, cx, y + Math.round((h - 10) / 2), 2, COLORS.night, 'center');
+  drawText5(label, cx, y + Math.round((h - 14) / 2), 2, COLORS.night, 'center');
   return h;
 }
 
@@ -1506,13 +1520,13 @@ function drawUpdateBanner() {
 }
 
 function drawTitle() {
-  drawTextShadow('SNOWBALL', CONFIG.W / 2, 60, 4, COLORS.coatBlue, 'center');
-  drawTextShadow('BEST: ' + state.best, CONFIG.W / 2, 86, 2, COLORS.gold, 'center');
-  drawTextShadow('CO-OP BEST: ' + state.coopBest, CONFIG.W / 2, 101, 2, COLORS.gold, 'center');
+  drawText5('SNOWBALL', CONFIG.W / 2, 50, 3, COLORS.coatBlue, 'center', COLORS.night);
+  drawText5('BEST: ' + state.best, CONFIG.W / 2, 84, 2, COLORS.night, 'center', COLORS.snow);
+  drawText5('CO-OP BEST: ' + state.coopBest, CONFIG.W / 2, 102, 2, COLORS.night, 'center', COLORS.snow);
   button('TAP TO PLAY', CONFIG.W / 2, 140, 140, 1.5, startGame);   // menu sits over the trees like a foreground
   const playH = Math.ceil(btnH() * 1.5);
   button('CO-OP', CONFIG.W / 2, 140 + Math.ceil(playH / 2) + Math.ceil(btnH() / 2) + 8, 140, 1, openCoopMenu, COLORS.ice);
-  if (installEvent) button('INSTALL', 3 + 32, 3 + Math.ceil(btnH() / 2), 64, 1, promptInstall, COLORS.ice);   // top left
+  if (installEvent) button('INSTALL', 3 + 42, 3 + Math.ceil(btnH() / 2), 84, 1, promptInstall, COLORS.ice);   // top left
   drawMuteButton(CONFIG.W - 3 - btnH(), 3, true);
 }
 
@@ -1527,8 +1541,8 @@ function keyBtn(label, x, y, w, h, onTap) {
 
 function drawCoopMenu() {
   const cx = CONFIG.W / 2, h = Math.ceil(btnH() * 1.3);
-  drawTextShadow('CO-OP', cx, 40, 4, COLORS.coatBlue, 'center');
-  drawTextShadow('TWO PLAYERS - ONE FORT', cx, 72, 1, COLORS.snow, 'center');
+  drawText5('CO-OP', cx, 36, 3, COLORS.coatBlue, 'center', COLORS.night);
+  drawText5('TWO PLAYERS - ONE FORT', cx, 68, 1, COLORS.night, 'center', COLORS.snow);
   button('CREATE GAME', cx, 120, 140, 1.3, () => { setMode('coophost'); hostGame(); });
   button('JOIN GAME', cx, 120 + h + 10, 140, 1.3, () => { state.entry = ''; net.status = 'idle'; net.error = ''; setMode('coopjoin'); });
   button('BACK', cx, 120 + 2 * (h + 10), 100, 1, () => setMode('title'), COLORS.ice);
@@ -1536,27 +1550,28 @@ function drawCoopMenu() {
 
 function drawCoopHost() {
   const cx = CONFIG.W / 2;
-  drawTextShadow('YOUR CODE', cx, 40, 2, COLORS.coatBlue, 'center');
+  drawText5('YOUR CODE', cx, 34, 2, COLORS.coatBlue, 'center', COLORS.night);
   if (net.status === 'error') {
-    drawTextShadow(net.error, cx, 90, 2, COLORS.red, 'center');
-    drawText('CHECK YOUR INTERNET AND TRY AGAIN', cx, 112, 1, COLORS.night, 'center');
+    drawText5(net.error, cx, 80, net.error.length > 15 ? 1 : 2, COLORS.red, 'center', COLORS.snow);
+    drawText5('CHECK YOUR INTERNET', cx, 104, 1, COLORS.night, 'center', COLORS.snow);
+    drawText5('AND TRY AGAIN', cx, 114, 1, COLORS.night, 'center', COLORS.snow);
   } else {
     drawCode(net.code, cx, 58, 3, CONFIG.codeLength);
-    drawText('YOUR FRIEND TAPS JOIN GAME', cx, 112, 1, COLORS.night, 'center');
-    drawText('AND TYPES THIS CODE', cx, 122, 1, COLORS.night, 'center');
+    drawText5('YOUR FRIEND TAPS JOIN GAME', cx, 100, 1, COLORS.night, 'center', COLORS.snow);
+    drawText5('AND TYPES THIS CODE', cx, 111, 1, COLORS.night, 'center', COLORS.snow);
     const dots = '.'.repeat(1 + Math.floor(performance.now() / 400) % 3);
-    drawTextShadow((net.status === 'opening' ? 'OPENING' : 'WAITING FOR PLAYER') + dots, cx, 146, 1, COLORS.snow, 'center');
+    drawText5((net.status === 'opening' ? 'OPENING' : 'WAITING FOR PLAYER') + dots, cx, 136, 1, COLORS.coatBlue, 'center', COLORS.snow);
   }
   button('CANCEL', cx, 200, 100, 1, backToCoopMenu, COLORS.ice);
 }
 
 function drawCoopJoin() {
   const cx = CONFIG.W / 2, kh = btnH();
-  drawTextShadow('JOIN GAME', cx, 14, 3, COLORS.coatBlue, 'center');
+  drawText5('JOIN GAME', cx, 8, 3, COLORS.coatBlue, 'center', COLORS.night);
   drawCode(state.entry, cx, 34, 2, CONFIG.codeLength);
-  const msg = net.status === 'connecting' ? 'CONNECTING...' : net.status === 'connected' ? 'CONNECTED! WAITING FOR HOST...'
-    : net.status === 'error' ? net.error : 'TYPE THE CODE FROM YOUR FRIEND';
-  drawText(msg, cx, 62, 1, net.status === 'error' ? COLORS.red : COLORS.night, 'center');
+  const msg = net.status === 'connecting' ? 'CONNECTING...' : net.status === 'connected' ? 'CONNECTED - WAITING FOR HOST'
+    : net.status === 'error' ? net.error : 'ENTER THE GAME CODE';
+  drawText5(msg, cx, 62, 1, net.status === 'error' ? COLORS.red : COLORS.night, 'center', COLORS.snow);
   const L = CONFIG.codeLetters;
   [L.slice(0, 9), L.slice(9, 18), L.slice(18)].forEach((row, ri) => {        // 9 + 9 + 8 keys, A-Z
     const x0 = Math.round((CONFIG.W - (row.length * 19 - 2)) / 2), y = 78 + ri * (kh + 4);
