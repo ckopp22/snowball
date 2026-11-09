@@ -54,6 +54,8 @@ const CONFIG = {
   gunTime: 5,             // s of machine-gun snowballs
   gunInterval: 0.12,      // s between machine-gun shots
   treeReturnTime: 6,      // s between each removed tree growing back
+  avalancheSpeed: 170,    // px/s the avalanche front sweeps down the screen
+  avalancheBand: 34,      // px thickness of the snow mass behind its front
   // Co-op (WebRTC through PeerJS: the host runs the game, the guest sends aim/throws and draws snapshots)
   netPrefix: 'snowball-coop-',                // peer id = prefix + the 4-letter code
   codeLetters: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ',  // the full alphabet, for both generating and typing codes
@@ -269,6 +271,7 @@ const SFX = {
   over:  () => { tone('square', 330, 300, 0.2, 0.3); tone('square', 247, 120, 0.45, 0.3, 0.22); },
   tree:  () => { noise('lowpass', 800, 300, 0.08, 0.3); tone('sine', 140, 80, 0.08, 0.35); },
   power: () => { tone('sine', 880, 880, 0.1, 0.3); tone('sine', 1175, 1175, 0.1, 0.3, 0.07); tone('sine', 1568, 1568, 0.22, 0.3, 0.14); },
+  avalanche: () => { noise('lowpass', 500, 120, 1.5, 0.7); tone('sine', 80, 38, 1.3, 0.5); },
   click: () => tone('square', 1000, 900, 0.03, 0.2),
 };
 function sfx(name, noForward) {
@@ -442,6 +445,7 @@ const state = {
   banner: 0,
   time: 0,             // seconds of play, for walk animation
   power: null,         // the floating snowflake: { x, baseY, y, age }
+  avalanche: null,     // { y } front of the avalanche while it sweeps down the screen
   powerTimer: CONFIG.powerFirstDelay,
   gun: 0,              // machine-gun seconds left
   gunTimer: 0,
@@ -606,6 +610,7 @@ function update(dt) {
     }
   }
 
+  updateAvalanche(dt);
   updateBullies(dt);
   updateParticles(dt);
   updatePrints(dt);
@@ -624,7 +629,7 @@ function resetGame() {
     snowballs: [], bullies: [], particles: [], prints: [], cooldown: 0, swing: 0,
     score: 0, newBest: false, health: CONFIG.fortHealth, flash: 0,
     wave: 0, toSpawn: 0, spawnTimer: 0, waveEnded: false, breakTimer: 0, banner: 0, time: 0,
-    power: null, powerTimer: CONFIG.powerFirstDelay, gun: 0, gunTimer: 0, treesRemoved: 0, treeReturnTimer: 0, popup: null, remote: freshRemote(),
+    power: null, avalanche: null, powerTimer: CONFIG.powerFirstDelay, gun: 0, gunTimer: 0, treesRemoved: 0, treeReturnTimer: 0, popup: null, remote: freshRemote(),
   });
   endAim();
 }
@@ -752,6 +757,7 @@ function collectPower(owner) {
   const opts = ['gun'];                                         // only offer effects that do something
   if (state.health < CONFIG.fortHealth) opts.push('heal');
   if (activeTrees().length) opts.push('trees');
+  if (state.bullies.some(b => b.state === 'walking')) opts.push('avalanche');
   const pick = opts[Math.floor(Math.random() * opts.length)];
   if (pick === 'gun') {
     const p = pl(owner);                                        // the machine gun goes to whoever popped it
@@ -762,6 +768,10 @@ function collectPower(owner) {
     state.health = CONFIG.fortHealth;
     puff(CONFIG.fortCX, CONFIG.fortCY - 12);
     state.popup = { text: 'FORT REPAIRED!', t: 1.4 };
+  } else if (pick === 'avalanche') {
+    state.avalanche = { y: -CONFIG.avalancheBand };             // starts above the top edge
+    sfx('avalanche');
+    state.popup = { text: 'AVALANCHE!', t: 1.4 };
   } else {
     for (const p of activeTrees()) puff(p[0] + 4, p[1] + 9);
     state.treesRemoved = Math.min(CONFIG.treeMax, state.wave - 1);
@@ -913,6 +923,32 @@ function updateBullies(dt) {
       if (b.state === 'falling' && b.t >= CONFIG.fallTime) { b.state = 'fading'; b.t = 0; }
       else if (b.state === 'fading' && b.t >= CONFIG.fadeTime) state.bullies.splice(i, 1);
     }
+  }
+}
+
+// Avalanche: a wall of snow sweeps from the top to the bottom and knocks over every walking enemy it passes over
+function updateAvalanche(dt) {
+  const av = state.avalanche;
+  if (!av) return;
+  av.y += CONFIG.avalancheSpeed * dt;
+  for (const b of state.bullies) {
+    if (b.state === 'walking' && b.y <= av.y && b.y > av.y - CONFIG.avalancheBand) {   // inside the band (new spawns behind it are safe)
+      b.hp = 1;                                  // one hit left, so this drops even a Big Kid
+      hitBully(b);
+    }
+  }
+  avalancheFx(dt);
+  if (av.y - CONFIG.avalancheBand > CONFIG.H + CONFIG.maxExtra) state.avalanche = null;   // past the bottom of any screen
+}
+
+// Flying snow along the front (spawned locally on both devices, not sent over the network)
+function avalancheFx(dt) {
+  const av = state.avalanche;
+  for (let i = 0, n = Math.ceil(dt * 120); i < n; i++) {
+    state.particles.push({
+      x: Math.random() * CONFIG.W, y: av.y + rand(-8, 2), vx: rand(-14, 14), vy: rand(-30, 20),
+      life: rand(0.3, 0.6), c: Math.random() < 0.5 ? COLORS.ice : COLORS.shadow,
+    });
   }
 }
 
@@ -1087,6 +1123,7 @@ function buildSnapshot() {
     B: state.bullies.map(b => [b.id, TYPE_IDS.indexOf(b.type), r1(b.x), r1(b.y), r1(b.vx), r1(b.vy),
                                STATE_IDS.indexOf(b.state), r1(b.t), b.flash > 0 ? 1 : 0, r1(b.ph), r1(b.ang)]),
     S: state.snowballs.map(s => [r1(s.x), r1(s.y), r1(s.vx), r1(s.vy)]),
+    av: state.avalanche ? r1(state.avalanche.y) : null,
     ev,
   };
 }
@@ -1121,6 +1158,7 @@ function applySnapshot(d) {
     return b;
   });
   state.snowballs = d.S.map(a => ({ x: a[0], y: a[1], vx: a[2], vy: a[3] }));
+  state.avalanche = typeof d.av === 'number' ? { y: d.av } : null;
   for (const e of d.ev || []) {
     if (e.e === 'p') puff(e.x, e.y);
     else if (e.e === 's') sfx(e.n, true);
@@ -1150,6 +1188,7 @@ function updateGuest(dt) {
       footstep(b, CONFIG.bullyTypes[b.type], px, py);
     } else b.t += dt;
   }
+  if (state.avalanche) { state.avalanche.y += CONFIG.avalancheSpeed * dt; avalancheFx(dt); }
   updateParticles(dt);
   updatePrints(dt);
 }
@@ -1651,6 +1690,26 @@ function drawPrints() {
   ctx.globalAlpha = 1;
 }
 
+// The avalanche: a rolling wall of snow (jagged leading edge, light-blue shading so it shows on white ground), fading out behind it
+function drawAvalanche() {
+  const av = state.avalanche;
+  if (!av) return;
+  const t = performance.now() / 1000, top = av.y - CONFIG.avalancheBand, q = CONFIG.avalancheBand / 4;
+  for (let x = 0; x < CONFIG.W; x += 6) {
+    const lead = av.y + Math.round(Math.sin(x * 0.45 + t * 14) * 3) + (x % 12 ? 0 : 2);      // rolling, uneven front
+    for (let k = 0; k < 4; k++) {
+      ctx.globalAlpha = 0.25 * (k + 1);
+      rect(COLORS.snow, x, top + k * q, 6, q + (k === 3 ? lead - av.y : 0));
+    }
+    ctx.globalAlpha = 0.9;
+    rect(COLORS.ice, x, lead - 10, 6, 7);
+    ctx.globalAlpha = 1;
+    rect(COLORS.shadow, x, lead - 3, 6, 3);
+    rect(COLORS.ice, x + (Math.floor(t * 20) + x) % 4, lead - 16 - (x * 7) % 9, 2, 2);      // tumbling chunks
+  }
+  ctx.globalAlpha = 1;
+}
+
 // Trees and bullies drawn back to front by their feet, so a bully above a tree is hidden behind its foliage
 function drawTreesAndBullies() {
   const items = [];
@@ -1672,6 +1731,7 @@ function draw() {
   drawPrints();
   drawTreesAndBullies();
   drawPower();
+  drawAvalanche();
   drawFort();
   for (const sl of slots()) drawKid(sl);
   for (const sl of slots()) drawArm(sl);
