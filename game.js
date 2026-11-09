@@ -119,6 +119,13 @@ const CONFIG = {
   btnMinInternal: 24,     // minimum button height in internal px
   storageKey: 'snowball_highscore',
   coopStorageKey: 'snowball_coop_highscore',   // co-op has its own best score
+  progressKey: 'snowball_progress',             // { level, xp } saved on this device
+  // Levels: every game's score is added to the bar; a full bar levels you up and the bar restarts (leftover score carries over).
+  levelNames: ['NEWBORN', 'SNOW TODDLER', 'FLAKE FIGHTER', 'SNOWBALL ROOKIE', 'FROST THROWER', 'ICE SLINGER',
+               'BLIZZARD BOSS', 'FROST CAPTAIN', 'SNOW HERO', 'SNOWBALLY LEGEND'],
+  levelCosts: [300, 500, 800, 1200, 1700, 2300, 3000, 3800, 4700],   // score needed to leave level 1..9
+  levelBarSeconds: 1.4,   // how long a full bar takes to fill on the menu
+  confettiCount: 130,
   mutedKey: 'snowball_muted',
   sfxVolume: 0.3,         // master volume (0-1); sounds are short and quiet on purpose
 };
@@ -188,6 +195,20 @@ function pixLine(x0, y0, x1, y1, c) {
 function loadBest(key) {
   try { return parseInt(localStorage.getItem(key || CONFIG.storageKey), 10) || 0; } catch (e) { return 0; }
 }
+const MAX_LEVEL = CONFIG.levelNames.length;
+const levelCost = lv => CONFIG.levelCosts[lv - 1];
+function loadProgress() {
+  try {
+    const p = JSON.parse(localStorage.getItem(CONFIG.progressKey));
+    const level = Math.floor(p.level), xp = Math.floor(p.xp);
+    if (level >= 1 && level <= MAX_LEVEL && xp >= 0) return { level, xp: level >= MAX_LEVEL ? 0 : Math.min(xp, levelCost(level) - 1) };
+  } catch (e) { /* fall through */ }
+  return { level: 1, xp: 0 };
+}
+function saveProgress(p) {
+  try { localStorage.setItem(CONFIG.progressKey, JSON.stringify(p)); } catch (e) { /* ignore */ }
+}
+
 function saveBest(v, key) {
   try { localStorage.setItem(key || CONFIG.storageKey, String(v)); } catch (e) { /* ignore */ }
 }
@@ -276,6 +297,20 @@ const SFX = {
   tree:  () => { noise('lowpass', 800, 300, 0.08, 0.3); tone('sine', 140, 80, 0.08, 0.35); },
   power: () => { tone('sine', 880, 880, 0.1, 0.3); tone('sine', 1175, 1175, 0.1, 0.3, 0.07); tone('sine', 1568, 1568, 0.22, 0.3, 0.14); },
   avalanche: () => { noise('lowpass', 500, 120, 1.5, 0.7); tone('sine', 80, 38, 1.3, 0.5); },
+  fanfare: () => {                       // level-up jingle
+    [[523, 0], [659, 0.12], [784, 0.24]].forEach(([f, d]) => tone('square', f, f, 0.1, 0.22, d));
+    tone('square', 1047, 1047, 0.3, 0.25, 0.36);
+    [[784, 0.72], [1047, 0.84]].forEach(([f, d]) => tone('square', f, f, 0.1, 0.22, d));
+    tone('square', 1319, 1319, 0.6, 0.25, 0.96);
+    [[262, 0.36, 0.6], [330, 0.36, 0.6], [392, 0.36, 0.6], [262, 0.96, 0.8], [330, 0.96, 0.8], [392, 0.96, 0.8]]
+      .forEach(([f, d, l]) => tone('triangle', f, f, l, 0.2, d));
+  },
+  legend: () => {                        // the big one: reaching the last level
+    SFX.fanfare();
+    [1047, 1319, 1568, 2093].forEach((f, i) => tone('square', f, f, 0.12, 0.2, 1.7 + i * 0.12));
+    tone('square', 2093, 2093, 0.9, 0.25, 2.2);
+    [262, 330, 392, 523].forEach(f => tone('triangle', f, f, 1.0, 0.2, 2.2));
+  },
   click: () => tone('square', 1000, 900, 0.03, 0.2),
 };
 function sfx(name, noForward) {
@@ -297,12 +332,12 @@ const FONT = {
   4: '101101111001001', 5: '111100110001110', 6: '011100111101111', 7: '111001010010010',
   8: '111101111101111', 9: '111101111001110',
   ':': '000010000010000', '!': '010010010000010', '-': '000000111000000',
-  '.': '000000000000010', '_': '000000000000111',
+  '.': '000000000000010', '_': '000000000000111', '(': '001010010010001', ')': '100010010010100',
 };
 
-function drawText(str, x, y, s, color, align) {
+function drawText(str, x, y, s, color, align, gap) {
   str = String(str).toUpperCase();
-  const w = str.length * 4 * s - s;
+  const g = gap === undefined ? s : gap, adv = 3 * s + g, w = str.length * adv - g;   // gap = pixels between letters
   let cx = Math.round(align === 'center' ? x - w / 2 : align === 'right' ? x - w : x);
   ctx.fillStyle = color;
   for (const ch of str) {
@@ -312,7 +347,7 @@ function drawText(str, x, y, s, color, align) {
         if (g[i] === '1') ctx.fillRect(cx + (i % 3) * s, y + Math.floor(i / 3) * s, s, s);
       }
     }
-    cx += 4 * s;
+    cx += adv;
   }
 }
 
@@ -322,7 +357,7 @@ const FONT5 = {};
 'A 01110,10001,10001,11111,10001,10001,10001|B 11110,10001,10001,11110,10001,10001,11110|C 01110,10001,10000,10000,10000,10001,01110|D 11110,10001,10001,10001,10001,10001,11110|E 11111,10000,10000,11110,10000,10000,11111|F 11111,10000,10000,11110,10000,10000,10000|G 01110,10001,10000,10111,10001,10001,01111|H 10001,10001,10001,11111,10001,10001,10001|I 01110,00100,00100,00100,00100,00100,01110|J 00111,00010,00010,00010,00010,10010,01100|K 10001,10010,10100,11000,10100,10010,10001|L 10000,10000,10000,10000,10000,10000,11111|M 10001,11011,10101,10101,10001,10001,10001|N 10001,11001,10101,10011,10001,10001,10001|O 01110,10001,10001,10001,10001,10001,01110|P 11110,10001,10001,11110,10000,10000,10000|Q 01110,10001,10001,10001,10101,10010,01101|R 11110,10001,10001,11110,10100,10010,10001|S 01111,10000,10000,01110,00001,00001,11110|T 11111,00100,00100,00100,00100,00100,00100|U 10001,10001,10001,10001,10001,10001,01110|V 10001,10001,10001,10001,10001,01010,00100|W 10001,10001,10001,10101,10101,11011,10001|X 10001,10001,01010,00100,01010,10001,10001|Y 10001,10001,01010,00100,00100,00100,00100|Z 11111,00001,00010,00100,01000,10000,11111'
   .split('|').forEach(g => { FONT5[g[0]] = g.slice(2).split(',').join(''); });
 
-'0 01110,10001,10011,10101,11001,10001,01110|1 00100,01100,00100,00100,00100,00100,01110|2 01110,10001,00001,00010,00100,01000,11111|3 11110,00001,00001,01110,00001,00001,11110|4 00010,00110,01010,10010,11111,00010,00010|5 11111,10000,11110,00001,00001,10001,01110|6 00110,01000,10000,11110,10001,10001,01110|7 11111,00001,00010,00100,01000,01000,01000|8 01110,10001,10001,01110,10001,10001,01110|9 01110,10001,10001,01111,00001,00010,01100|: 00000,00100,00100,00000,00100,00100,00000|! 00100,00100,00100,00100,00100,00000,00100|- 00000,00000,00000,11111,00000,00000,00000|. 00000,00000,00000,00000,00000,01100,01100'
+'( 00010,00100,01000,01000,01000,00100,00010|) 01000,00100,00010,00010,00010,00100,01000|/ 00001,00010,00010,00100,01000,01000,10000|+ 00000,00100,00100,11111,00100,00100,00000|0 01110,10001,10011,10101,11001,10001,01110|1 00100,01100,00100,00100,00100,00100,01110|2 01110,10001,00001,00010,00100,01000,11111|3 11110,00001,00001,01110,00001,00001,11110|4 00010,00110,01010,10010,11111,00010,00010|5 11111,10000,11110,00001,00001,10001,01110|6 00110,01000,10000,11110,10001,10001,01110|7 11111,00001,00010,00100,01000,01000,01000|8 01110,10001,10001,01110,10001,10001,01110|9 01110,10001,10001,01111,00001,00010,01100|: 00000,00100,00100,00000,00100,00100,00000|! 00100,00100,00100,00100,00100,00000,00100|- 00000,00000,00000,11111,00000,00000,00000|. 00000,00000,00000,00000,00000,01100,01100'
   .split('|').forEach(g => { FONT5[g[0]] = g.slice(2).split(',').join(''); });
 
 function drawGlyph5(ch, x, y, s, color) {
@@ -355,10 +390,10 @@ function drawCode(str, cx, y, s, len) {
   }
 }
 
-function drawTextShadow(str, x, y, s, color, align) {
+function drawTextShadow(str, x, y, s, color, align, gap) {
   const o = Math.ceil(s / 2);
-  drawText(str, x + o, y + o, s, COLORS.night, align);
-  drawText(str, x, y, s, color, align);
+  drawText(str, x + o, y + o, s, COLORS.night, align, gap);
+  drawText(str, x, y, s, color, align, gap);
 }
 
 // ---------- Static background (pre-rendered once) ----------
@@ -439,6 +474,11 @@ const state = {
   score: 0,
   best: loadBest(),
   coopBest: loadBest(CONFIG.coopStorageKey),
+  progress: loadProgress(),   // real level / xp-in-level (saved)
+  shown: null,         // what the menu is showing; it catches up to progress with an animation
+  lastXp: 0,           // score added to the bar by the game that just ended
+  confetti: [],
+  levelUpFx: null,     // { t, level } celebration banner
   newBest: false,
   health: CONFIG.fortHealth,
   flash: 0,            // fort hit-flash timer
@@ -573,6 +613,8 @@ window.addEventListener('pointercancel', e => {
   if (e.pointerId === state.pointerId) endAim();
 });
 window.addEventListener('blur', endAim);
+
+state.shown = { ...state.progress };
 
 // ---------- Update ----------
 function updateFlakes(dt) {
@@ -1010,6 +1052,57 @@ function damageFort(n) {
   if (state.health <= 0) gameOver();
 }
 
+// Add a finished game's score to the level bar; a full bar levels up and the leftover carries into the next level
+function awardXp(score) {
+  state.lastXp = Math.max(0, Math.floor(score));
+  if (state.lastXp <= 0) return;
+  let { level, xp } = state.progress;
+  xp += state.lastXp;
+  while (level < MAX_LEVEL && xp >= levelCost(level)) { xp -= levelCost(level); level++; }
+  if (level >= MAX_LEVEL) xp = 0;
+  state.progress = { level, xp };
+  saveProgress(state.progress);
+}
+
+// Main menu: the shown bar fills up to the real value; each time it tops out it levels up with confetti and music
+function updateProgress(dt) {
+  const sh = state.shown, real = state.progress;
+  if (sh.level === real.level && sh.xp === real.xp) return;
+  const cost = levelCost(sh.level), speed = cost / CONFIG.levelBarSeconds;
+  const target = sh.level < real.level ? cost : real.xp;
+  sh.xp = Math.min(target, sh.xp + speed * dt);
+  if (sh.level < real.level && sh.xp >= cost) {
+    sh.level++;
+    sh.xp = 0;
+    celebrate(sh.level);
+  }
+}
+
+function celebrate(level) {
+  state.levelUpFx = { t: 3.4, level };
+  sfx(level >= MAX_LEVEL ? 'legend' : 'fanfare');
+  const colors = [COLORS.gold, COLORS.red, COLORS.coatBlue, COLORS.hatGreen, COLORS.orange, COLORS.snow, COLORS.ice];
+  for (let i = 0; i < CONFIG.confettiCount; i++) {
+    state.confetti.push({
+      x: rand(0, CONFIG.W), y: rand(-40, 0), vx: rand(-25, 25), vy: rand(30, 110), ph: rand(0, 6.3),
+      c: colors[i % colors.length],
+    });
+  }
+}
+
+function updateCelebration(dt) {
+  if (state.levelUpFx && (state.levelUpFx.t -= dt) <= 0) state.levelUpFx = null;
+  for (let i = state.confetti.length - 1; i >= 0; i--) {
+    const c = state.confetti[i];
+    c.vy += 50 * dt;
+    c.vy = Math.min(c.vy, 90);                 // flutters down instead of dropping like a stone
+    c.ph += dt * 9;
+    c.x += (c.vx + Math.sin(c.ph) * 18) * dt;
+    c.y += c.vy * dt;
+    if (c.y > view.h + 6) state.confetti.splice(i, 1);
+  }
+}
+
 // Solo and co-op keep separate best scores
 const bestNow = () => (isCoop() ? state.coopBest : state.best);
 function recordBest(score) {
@@ -1021,6 +1114,7 @@ function recordBest(score) {
 function gameOver() {
   endAim();
   recordBest(state.score);
+  awardXp(state.score);
   state.mode = 'gameover';
   sfx('over');
 }
@@ -1159,6 +1253,7 @@ function applySnapshot(d) {
   if (d.m === 'gameover' && prev === 'playing') {
     endAim();
     recordBest(d.sc);
+    awardXp(d.sc);
   }
   state.mode = d.m;
   state.score = d.sc; state.wave = d.w; state.health = d.h; state.flash = d.fl; state.banner = d.bn;
@@ -1248,18 +1343,21 @@ function drawFlakes() {
 }
 
 // Kid, 8x15, standing inside the fort (slot 0: blue hat, orange scarf; slot 1: gold hat, green scarf). Hand drawn via the arm.
+// Breathing: every ~3 s the upper body lifts 1 px and settles back (legs and throwing hand stay put); the two boys are out of step
+const breath = slot => (Math.sin(performance.now() / 1000 * 2.2 + slot * 1.3) > 0 ? 1 : 0);
+
 function drawKid(slot) {
-  const { x, y } = kidPos(slot), c = KID_COLORS[slot];
-  rect(COLORS.snow, x + 3, y, 2, 1);          // pom
-  rect(c.hat, x + 1, y + 1, 6, 2);            // hat
-  rect(COLORS.snow, x, y + 3, 8, 1);          // hat cuff
-  rect(COLORS.skin, x + 1, y + 4, 6, 3);      // face
-  rect(COLORS.black, x + 2, y + 5, 1, 1);     // eyes
-  rect(COLORS.black, x + 5, y + 5, 1, 1);
-  rect(c.coat, x + 1, y + 9, 6, 4);           // coat
-  rect(c.scarf, x, y + 7, 8, 2);              // scarf
-  rect(c.scarf, x + 1, y + 9, 2, 3);          // scarf tail
-  rect(COLORS.black, x + 2, y + 13, 2, 2);    // legs
+  const { x, y } = kidPos(slot), c = KID_COLORS[slot], b = breath(slot);
+  rect(COLORS.snow, x + 3, y - b, 2, 1);          // pom
+  rect(c.hat, x + 1, y + 1 - b, 6, 2);            // hat
+  rect(COLORS.snow, x, y + 3 - b, 8, 1);          // hat cuff
+  rect(COLORS.skin, x + 1, y + 4 - b, 6, 3);      // face
+  rect(COLORS.black, x + 2, y + 5 - b, 1, 1);     // eyes
+  rect(COLORS.black, x + 5, y + 5 - b, 1, 1);
+  rect(c.coat, x + 1, y + 9 - b, 6, 4 + b);       // coat (stretches so there is no gap)
+  rect(c.scarf, x, y + 7 - b, 8, 2);              // scarf
+  rect(c.scarf, x + 1, y + 9 - b, 2, 3);          // scarf tail
+  rect(COLORS.black, x + 2, y + 13, 2, 2);        // legs
   rect(COLORS.black, x + 4, y + 13, 2, 2);
 }
 
@@ -1278,7 +1376,7 @@ function drawArm(slot) {
     off = -CONFIG.armPull;
   }
   const hand = handPos(slot), k = kidPos(slot);
-  const sx = k.x + CONFIG.shoulderDX, sy = k.y + CONFIG.shoulderDY;
+  const sx = k.x + CONFIG.shoulderDX, sy = k.y + CONFIG.shoulderDY - breath(slot);   // the shoulder breathes with the body
   const hx = hand.x + dx * off, hy = hand.y + dy * off;
   // arm as a few coat-colored pixels from shoulder to hand
   const steps = 4;
@@ -1608,6 +1706,52 @@ function drawBestLine(str, y, seed) {
   sparkle(x0 + w + 20, y + 7, seed + 0.75);
 }
 
+// Level title above the boy and the progress bar under the fort (main menu only; world coordinates so they line up with the kid)
+function drawLevelUi() {
+  const cx = CONFIG.W / 2, sh = state.shown, lv = sh.level, max = lv >= MAX_LEVEL;
+  // Gamertag floating above the boy: a gold level badge + the title on a dark plate, with a little pointer down at his head
+  const name = CONFIG.levelNames[lv - 1], num = String(lv), edge = max ? COLORS.gold : COLORS.shadow;
+  const badgeW = num.length * 6 - 1 + 6, nameW = name.length * 7 - 2;
+  const bob = Math.round(Math.sin(performance.now() / 1000 * 2.4) * 1.4);          // slow float: -1, 0, +1 px
+  const tw = 2 + badgeW + 4 + nameW + 4, th = 13, tx = Math.round(cx - tw / 2), ty = 248 + bob;
+  rect(edge, tx - 1, ty - 1, tw + 2, th + 2);                       // border
+  rect(COLORS.night, tx, ty, tw, th);
+  rect(COLORS.gold, tx + 2, ty + 2, badgeW, 9);                     // level badge
+  drawText5(num, tx + 5, ty + 3, 1, COLORS.night, undefined, undefined, 1);
+  drawText5(name, tx + 2 + badgeW + 4, ty + 3, 1, max ? COLORS.gold : COLORS.snow, undefined, undefined, 2);
+  for (let i = 0; i < 4; i++) {                                     // pointer
+    const wo = 9 - 2 * i, wi = wo - 2, yy = ty + th + 1 + i;
+    rect(edge, Math.round(cx - wo / 2), yy, wo, 1);
+    if (wi > 0) rect(COLORS.night, Math.round(cx - wi / 2), yy, wi, 1);
+  }
+  rect(COLORS.night, Math.round(cx - 3.5), ty + th, 7, 1);         // open the plate's bottom edge into the pointer
+  const bw = 120, bx = Math.round(cx - bw / 2), by = 300, bh = 8;
+  const cost = max ? 1 : levelCost(lv), fw = Math.round(bw * (max ? 1 : Math.min(1, sh.xp / cost)));
+  rect(COLORS.night, bx - 1, by - 1, bw + 2, bh + 2);
+  rect(COLORS.ice, bx, by, bw, bh);
+  if (fw > 0) {
+    rect(max ? COLORS.gold : COLORS.coatBlue, bx, by, fw, bh);
+    rect(max ? '#fff3b0' : COLORS.shadow, bx, by, fw, 2);                     // highlight along the top
+    if (!max && state.progress.xp !== sh.xp) rect(COLORS.snow, bx + fw - 1, by, 1, bh);   // bright tip while it fills
+  }
+  drawText5(max ? 'MAX LEVEL' : Math.floor(sh.xp) + ' / ' + cost, cx, by + bh + 4, 1, COLORS.night, 'center', undefined, 2);
+}
+
+function drawCelebration() {
+  for (const c of state.confetti) {
+    const flip = Math.sin(c.ph) > 0;                                           // tumbling: wide, then tall
+    rect(c.c, c.x, c.y, flip ? 3 : 2, flip ? 2 : 3);
+  }
+  const fx = state.levelUpFx;
+  if (!fx || state.mode !== 'title') return;
+  const a = Math.min(1, fx.t / 0.5);
+  ctx.globalAlpha = a * 0.92;
+  rect(COLORS.night, Math.round((CONFIG.W - 154) / 2), 190, 154, 30);   // hugs the text
+  ctx.globalAlpha = a;
+  drawText5('LEVEL UP!', CONFIG.W / 2, 198, 2, COLORS.gold, 'center', undefined, 6);
+  ctx.globalAlpha = 1;
+}
+
 // Install hint: only after the browser fires beforeinstallprompt; gone once installed
 let installEvent = null;
 window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvent = e; });
@@ -1623,7 +1767,10 @@ function promptInstall() {
 let updateReady = false;
 window.addEventListener('snowball-update', () => { updateReady = true; });
 function drawUpdateBanner() {
-  button('TAP TO UPDATE', CONFIG.W / 2, view.h - view.safeBottom - 4 - Math.ceil(btnH() / 2), 176, 1, () => location.reload(), COLORS.hatGreen);
+  // On a short canvas the bottom of the title screen holds the level bar, so tuck the banner under the top buttons instead
+  const cy = state.mode === 'title' && view.h < CONFIG.H + 44 ? view.safeTop + 3 + btnH() + 8 + Math.ceil(btnH() / 2)
+    : view.h - view.safeBottom - 4 - Math.ceil(btnH() / 2);
+  button('TAP TO UPDATE', CONFIG.W / 2, cy, 176, 1, () => location.reload(), COLORS.hatGreen);
 }
 
 function drawTitle() {
@@ -1701,7 +1848,7 @@ function drawPaused() {
   drawTextShadow('PAUSED', CONFIG.W / 2, 80, 3, COLORS.snow, 'center');
   const h = btnH();
   button('RESUME', CONFIG.W / 2, 140, 110, 1, () => setMode('playing'));
-  button('QUIT', CONFIG.W / 2, 140 + h + 10, 110, 1, () => { resetGame(); setMode('title'); });
+  button('QUIT', CONFIG.W / 2, 140 + h + 10, 110, 1, () => { awardXp(state.score); resetGame(); setMode('title'); });   // quitting still banks the score
 }
 
 function drawGameOver() {
@@ -1710,6 +1857,7 @@ function drawGameOver() {
   drawTextShadow('SCORE: ' + state.score, CONFIG.W / 2, 92, 2, COLORS.snow, 'center');
   drawTextShadow('BEST: ' + bestNow(), CONFIG.W / 2, 112, 2, COLORS.snow, 'center');
   if (state.newBest) drawTextShadow('NEW BEST!', CONFIG.W / 2, 136, 2, COLORS.gold, 'center');
+  if (state.lastXp > 0) drawText5('+' + state.lastXp + ' TO YOUR LEVEL BAR', CONFIG.W / 2, 160, 1, COLORS.snow, 'center', COLORS.night);
   if (net.role === 'guest') drawTextShadow('WAITING FOR HOST...', CONFIG.W / 2, 184, 1, COLORS.snow, 'center');
   else button('PLAY AGAIN', CONFIG.W / 2, 190, 150, 1.3, startGame);
   if (isCoop()) button('MENU', CONFIG.W / 2, 190 + Math.ceil(btnH() * 1.3) + 10, 100, 1, leaveCoop, COLORS.ice);
@@ -1787,7 +1935,7 @@ function draw() {
   for (const sl of slots()) drawAimLine(sl);
   for (const s of state.snowballs) drawSnowball(s);
   drawParticles();
-  if (state.mode === 'title') withInset(drawTitle);
+  if (state.mode === 'title') { drawLevelUi(); withInset(drawTitle); }
   else if (state.mode === 'coopmenu') withInset(drawCoopMenu);
   else if (state.mode === 'coophost') withInset(drawCoopHost);
   else if (state.mode === 'coopjoin') withInset(drawCoopJoin);
@@ -1798,6 +1946,7 @@ function draw() {
     if (state.mode === 'paused') drawPaused();
     else if (state.mode === 'gameover') drawGameOver();
   }
+  drawCelebration();
   if (isCoop() && net.lost && (state.mode === 'playing' || state.mode === 'gameover')) drawLost();
   if (updateReady && state.mode !== 'playing') drawUpdateBanner();
 }
@@ -1811,6 +1960,8 @@ function frame(now) {
   else if (state.mode === 'playing') update(dt);
   else if (state.mode !== 'paused') updateFlakes(dt);   // snow keeps falling on menus / game over
   if (isCoop()) netTick(dt);
+  if (state.mode === 'title') updateProgress(dt);
+  if (state.mode !== 'paused') updateCelebration(dt);
   ctx.imageSmoothingEnabled = false;
   draw();
   requestAnimationFrame(frame);
