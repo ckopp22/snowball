@@ -1394,14 +1394,14 @@ function withInset(fn) {
 
 const btnH = () => Math.max(CONFIG.btnMinInternal, Math.ceil(CONFIG.btnMinPx / view.scale));
 
-function button(label, cx, cy, w, hMul, onTap, color) {
+function button(label, cx, cy, w, hMul, onTap, color, gap) {
   const h = Math.ceil(btnH() * hMul);
   const x = Math.round(cx - w / 2), y = Math.round(cy - h / 2);
   state.buttons.push({ x, y: y + view.ty, w, h, onTap });
   rect(COLORS.night, x - 1, y - 1, w + 2, h + 2);
   rect(color || COLORS.gold, x, y, w, h);
   rect(color ? COLORS.shadow : '#e6b92e', x, y + h - 2, w, 2);
-  drawText5(label, cx, y + Math.round((h - 14) / 2), 2, COLORS.night, 'center');
+  drawText5(label, cx, y + Math.round((h - 14) / 2), 2, COLORS.night, 'center', undefined, gap);
   return h;
 }
 
@@ -1502,6 +1502,25 @@ function drawBanner() {
   ctx.globalAlpha = 1;
 }
 
+// Twinkling 4-point sparkle: the arms grow from a dot to 3 px and back over one cycle (seed offsets the timing)
+function sparkle(x, y, seed) {
+  const t = (performance.now() / 800 + seed) % 1, r = Math.round(Math.sin(t * Math.PI) * 3);
+  for (const [c, o] of [[COLORS.night, 1], [COLORS.gold, 0]]) {        // dark shadow first so it shows on white snow
+    rect(c, x + o, y + o, 1, 1);
+    for (let i = 1; i <= r; i++) { rect(c, x + o + i, y + o, 1, 1); rect(c, x + o - i, y + o, 1, 1); rect(c, x + o, y + o + i, 1, 1); rect(c, x + o, y + o - i, 1, 1); }
+  }
+}
+
+// Small yellow best-score line with sparkles around it (title screen)
+function drawBestLine(str, y, seed) {
+  const w = str.length * 6 - 1, x0 = Math.round(CONFIG.W / 2 - w / 2);
+  drawText5(str, CONFIG.W / 2, y, 1, COLORS.gold, 'center', COLORS.night);
+  sparkle(x0 - 9, y + 3, seed);                  // all beside the text so they never cover the line above or below
+  sparkle(x0 + w + 9, y + 3, seed + 0.5);
+  sparkle(x0 - 20, y - 1, seed + 0.25);
+  sparkle(x0 + w + 20, y + 7, seed + 0.75);
+}
+
 // Install hint: only after the browser fires beforeinstallprompt; gone once installed
 let installEvent = null;
 window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvent = e; });
@@ -1522,12 +1541,12 @@ function drawUpdateBanner() {
 
 function drawTitle() {
   drawText5('SNOWBALL', CONFIG.W / 2, 50, 3, COLORS.coatBlue, 'center', COLORS.night);
-  drawText5('BEST: ' + state.best, CONFIG.W / 2, 84, 2, COLORS.night, 'center', COLORS.snow);
-  drawText5('CO-OP BEST: ' + state.coopBest, CONFIG.W / 2, 102, 2, COLORS.night, 'center', COLORS.snow, 1);   // tighter gap: it is long
-  button('TAP TO PLAY', CONFIG.W / 2, 140, 164, 1.5, startGame);   // menu sits over the trees like a foreground
-  const playH = Math.ceil(btnH() * 1.5);
-  button('CO-OP', CONFIG.W / 2, 140 + Math.ceil(playH / 2) + Math.ceil(btnH() / 2) + 8, 140, 1, openCoopMenu, COLORS.ice);
-  if (installEvent) button('INSTALL', 3 + 50, 3 + Math.ceil(btnH() / 2), 100, 1, promptInstall, COLORS.ice);   // top left
+  drawBestLine('BEST: ' + state.best, 88, 0);
+  drawBestLine('CO-OP BEST: ' + state.coopBest, 102, 0.37);
+  button('PLAY', CONFIG.W / 2, 140, 100, 1, startGame);   // smaller main-menu buttons, label gap 2   // menu sits over the trees like a foreground
+  const playH = btnH();
+  button('CO-OP', CONFIG.W / 2, 140 + Math.ceil(playH / 2) + Math.ceil(btnH() / 2) + 8, 66, 1, openCoopMenu, COLORS.ice, 1);   // smaller than Play
+  if (installEvent) button('INSTALL', 3 + 43, 3 + Math.ceil(btnH() / 2), 86, 1, promptInstall, COLORS.ice, 1);   // top left
   drawMuteButton(CONFIG.W - 3 - btnH(), 3, true);
 }
 
