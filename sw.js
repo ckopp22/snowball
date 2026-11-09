@@ -1,5 +1,5 @@
 // Bump CACHE_VERSION whenever any game file changes so installed copies update.
-const CACHE_VERSION = 'snowball-v1';
+const CACHE_VERSION = 'snowball-v5';
 
 const FILES = [
   './',

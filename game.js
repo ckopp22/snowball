@@ -14,16 +14,20 @@ const CONFIG = {
   aimDots: 5,
   aimDotSpacing: 8,       // 5 dots -> last dot 40 px from the hand
   aimDotSize: 2,
-  handX: 99,              // where throws and the aim line start
-  handY: 262,
-  shoulderX: 94,
-  shoulderY: 267,
-  armPull: 3,             // px the arm draws back while aiming
+  handX: 97,              // where throws and the aim line start
+  handY: 282,
+  shoulderX: 93,
+  shoulderY: 285,
+  armPull: 2,             // px the arm draws back while aiming
   armSwingTime: 0.18,     // s
-  armSwingReach: 4,       // px the arm pushes forward on release
-  ringRadius: 6,
-  ringSteps: 24,
-  fortTop: 270,
+  armSwingReach: 3,       // px the arm pushes forward on release
+  ringRadius: 4,
+  ringSteps: 16,
+  // Fort: a half-circle wall in front of the kid, open at the back (bottom)
+  fortCX: 90,             // centre of the half circle (the kid stands here)
+  fortCY: 284,            // its flat (open) side sits at this y
+  fortOuter: 18,          // outer radius (bullies stop when they touch it)
+  fortInner: 10,          // inner radius (wall is 8 px thick)
   flakes: 30,
   flakeSpeedMin: 12,
   flakeSpeedMax: 26,
@@ -32,9 +36,12 @@ const CONFIG = {
   bullyMargin: 8,         // keep spawn columns this far from the side edges
   regularSpeed: 14,       // px/s at wave 1; every type's speed is a multiple of this
   hitFlashTime: 0.12,     // s white flash when a Big Kid survives a hit
+  turnY: 200,             // bullies walk straight down until this y, then turn toward the kid
+  turnRate: 3,            // rad/s they can turn at
+  turnSwayFade: 40,       // px of travel past turnY over which the Sled Kid's sway fades out
   bullyTypes: {
     // speedMul: x Regular speed | hp: hits to drop | radius: hit circle | halfH: half sprite height
-    // (fort reached when y + halfH >= fortTop) | from: first wave | weight/weightPer/weightMax: spawn odds
+    // (fort reached when the feet touch the fort arc) | from: first wave | weight/weightPer/weightMax: spawn odds
     // (maxes stay below Regular's weight so Regular is always the most common type)
     regular: { speedMul: 1,   hp: 1, points: 10, fortDamage: 1, radius: 6, halfH: 7, from: 1, weight: 10, weightPer: 0,   weightMax: 10 },
     runner:  { speedMul: 2,   hp: 1, points: 20, fortDamage: 1, radius: 5, halfH: 6, from: 3, weight: 3,  weightPer: 0.5, weightMax: 7 },
@@ -275,25 +282,39 @@ bg.width = CONFIG.W; bg.height = CONFIG.H;
 })();
 
 // ---------- Fort ----------
+// A half-circle ring of two rows of snow blocks, pre-rendered once, with the floor inside it.
+// fortMask is the same wall in red, drawn over the fort for the hit flash.
 const fort = document.createElement('canvas');
-fort.width = CONFIG.W; fort.height = CONFIG.H - CONFIG.fortTop;
+const fortMask = document.createElement('canvas');
+fort.width = fortMask.width = CONFIG.W;
+fort.height = fortMask.height = CONFIG.H;
 (function buildFort() {
-  const f = fort.getContext('2d');
-  const r = (c, x, y, w, h) => { f.fillStyle = c; f.fillRect(x, y, w, h); };
-  const bw = 20, bh = 10, rows = Math.ceil(fort.height / bh);
-  r(COLORS.shadow, 0, 0, fort.width, fort.height); // mortar / outline
-  for (let row = 0; row < rows; row++) {
-    const off = row % 2 ? -bw / 2 : 0;
-    for (let x = off; x < fort.width; x += bw) {
-      const y = row * bh;
-      const x0 = Math.max(0, x + 1), x1 = Math.min(fort.width, x + bw - 1);
-      r(COLORS.snow, x0, y + 1, x1 - x0, bh - 2);
-      r(COLORS.ice, x0, y + bh - 3, x1 - x0, 2); // bottom shade
+  const f = fort.getContext('2d'), m = fortMask.getContext('2d');
+  const cx = CONFIG.fortCX, cy = CONFIG.fortCY, ri = CONFIG.fortInner;
+  const rm = (CONFIG.fortOuter + ri) / 2;
+  // Soft cloud-like wall: overlapping round puffs of snow along the arc (varied sizes make it lumpy)
+  const radii = [4, 5, 4.5, 5.5, 5, 5.5, 4.5, 5, 4];
+  const puffs = radii.map((r, i) => {
+    const a = i * Math.PI / (radii.length - 1);
+    return { x: cx + Math.cos(a) * rm, y: cy - Math.sin(a) * rm, r };
+  });
+  m.fillStyle = COLORS.red;
+  for (let y = 0; y < cy + 4; y++) {
+    for (let x = 0; x < CONFIG.W; x++) {
+      const px = x + 0.5, py = y + 0.5;
+      let best = null, bm = Infinity;                     // nearest puff and signed distance to its edge
+      for (const p of puffs) {
+        const e = Math.hypot(px - p.x, py - p.y) - p.r;
+        if (e < bm) { bm = e; best = p; }
+      }
+      if (bm > 0) continue;                               // outside the wall
+      const s = ((px - best.x) * 0.5 + (py - best.y) * 0.8) / best.r;   // >0 = facing away from the light
+      f.fillStyle = bm > -1.2 ? (s > 0 ? COLORS.shadow : COLORS.ice)    // soft edge
+        : s > 0.5 ? COLORS.shadow : s > 0.15 ? COLORS.ice : COLORS.snow;
+      f.fillRect(x, y, 1, 1);
+      m.fillRect(x, y, 1, 1);
     }
   }
-  // Rounded-ish top edge with little bumps
-  r(COLORS.snow, 0, 0, fort.width, 1);
-  for (let x = 0; x < fort.width; x += 20) r(COLORS.snow, x + 4, -0, 12, 1);
 })();
 
 // ---------- State ----------
@@ -506,6 +527,7 @@ function spawnBully() {
     type,
     x: x0, x0,                                       // x0 = centre column (sway is around it)
     y: -T.halfH,
+    ang: Math.PI / 2,                                // heading (screen coords): straight down
     speed: waveSpeed(state.wave) * T.speedMul,
     hp: T.hp,
     state: 'walking',      // walking | falling | fading
@@ -582,10 +604,21 @@ function updateBullies(dt) {
     const b = state.bullies[i], T = CONFIG.bullyTypes[b.type];
     if (b.flash > 0) b.flash -= dt;
     if (b.state === 'walking') {
-      b.y += b.speed * dt;
       b.age += dt;
-      if (T.swayAmp) b.x = b.x0 + Math.sin(b.age * T.swayFreq * Math.PI * 2 + b.ph) * T.swayAmp;
-      if (b.y + T.halfH >= CONFIG.fortTop) {             // reached the fort
+      // Walk straight down; below turnY, steer smoothly toward the kid (fort centre)
+      const want = b.y >= CONFIG.turnY ? Math.atan2(CONFIG.fortCY - b.y, CONFIG.fortCX - b.x0) : Math.PI / 2;
+      const da = Math.atan2(Math.sin(want - b.ang), Math.cos(want - b.ang));   // wrapped to -PI..PI
+      const maxTurn = CONFIG.turnRate * dt;
+      b.ang += Math.max(-maxTurn, Math.min(maxTurn, da));
+      b.x0 += Math.cos(b.ang) * b.speed * dt;     // x0 = path position; the Sled Kid's sway is added on top
+      b.y += Math.sin(b.ang) * b.speed * dt;
+      let sway = 0;
+      if (T.swayAmp) {
+        const k = Math.max(0, Math.min(1, 1 - (b.y - CONFIG.turnY) / CONFIG.turnSwayFade));
+        sway = Math.sin(b.age * T.swayFreq * Math.PI * 2 + b.ph) * T.swayAmp * k;
+      }
+      b.x = b.x0 + sway;
+      if (b.y >= CONFIG.H || Math.hypot(b.x - CONFIG.fortCX, b.y - CONFIG.fortCY) <= CONFIG.fortOuter + T.radius) {  // touches the fort
         state.bullies.splice(i, 1);
         damageFort(T.fortDamage);
       }
@@ -636,23 +669,20 @@ function drawFlakes() {
   }
 }
 
-// Kid (blue hat, orange scarf) peeking over the fort. Hand drawn separately via arm.
+// Kid (blue hat, orange scarf), 8x15, standing inside the fort. Hand drawn separately via arm.
 function drawKid() {
-  const x = 84, y = 250;
-  // hat with pom
-  rect(COLORS.snow, x + 5, y - 2, 2, 2);
-  rect(COLORS.coatBlue, x + 2, y, 8, 3);
-  rect(COLORS.coatBlue, x + 1, y + 3, 10, 2);
-  rect(COLORS.snow, x + 1, y + 5, 10, 1);   // hat cuff
-  // face
-  rect(COLORS.skin, x + 2, y + 6, 8, 6);
-  rect(COLORS.black, x + 4, y + 8, 1, 2);   // eyes
-  rect(COLORS.black, x + 7, y + 8, 1, 2);
-  // scarf
-  rect(COLORS.orange, x + 1, y + 12, 10, 3);
-  rect(COLORS.orange, x + 9, y + 14, 2, 5); // scarf tail
-  // body / coat
-  rect(COLORS.coatBlue, x + 1, y + 15, 8, 6);
+  const x = 86, y = 275;
+  rect(COLORS.snow, x + 3, y, 2, 1);          // pom
+  rect(COLORS.coatBlue, x + 1, y + 1, 6, 2);  // hat
+  rect(COLORS.snow, x, y + 3, 8, 1);          // hat cuff
+  rect(COLORS.skin, x + 1, y + 4, 6, 3);      // face
+  rect(COLORS.black, x + 2, y + 5, 1, 1);     // eyes
+  rect(COLORS.black, x + 5, y + 5, 1, 1);
+  rect(COLORS.coatBlue, x + 1, y + 9, 6, 4);  // coat
+  rect(COLORS.orange, x, y + 7, 8, 2);        // scarf
+  rect(COLORS.orange, x + 1, y + 9, 2, 3);    // scarf tail
+  rect(COLORS.black, x + 2, y + 13, 2, 2);    // legs
+  rect(COLORS.black, x + 4, y + 13, 2, 2);
 }
 
 function drawArm() {
@@ -670,13 +700,13 @@ function drawArm() {
   }
   const hx = CONFIG.handX + dx * off, hy = CONFIG.handY + dy * off;
   // arm as a few coat-colored pixels from shoulder to hand
-  const steps = 5;
+  const steps = 4;
   for (let i = 0; i <= steps; i++) {
     const t = i / steps;
     rect(COLORS.coatBlue, CONFIG.shoulderX + (hx - CONFIG.shoulderX) * t - 1,
-         CONFIG.shoulderY + (hy - CONFIG.shoulderY) * t - 1, 3, 3);
+         CONFIG.shoulderY + (hy - CONFIG.shoulderY) * t - 1, 2, 2);
   }
-  rect(COLORS.skin, hx - 1, hy - 1, 3, 3); // hand
+  rect(COLORS.skin, hx - 1, hy - 1, 2, 2); // hand
 }
 
 function drawAimLine() {
@@ -687,7 +717,7 @@ function drawAimLine() {
   for (let i = 1; i <= n; i++) {
     const d = i * CONFIG.aimDotSpacing;
     ctx.globalAlpha = 1 - (i - 1) / (n + 1);   // fade toward the end
-    rect(COLORS.snow, CONFIG.handX + dx * d - 1, CONFIG.handY + dy * d - 1, CONFIG.aimDotSize, CONFIG.aimDotSize);
+    rect(COLORS.black, CONFIG.handX + dx * d - 1, CONFIG.handY + dy * d - 1, CONFIG.aimDotSize, CONFIG.aimDotSize);
   }
   ctx.globalAlpha = 1;
 }
@@ -713,26 +743,28 @@ function drawSnowball(s) {
   rect(COLORS.snow, x - 3, y - 1, 6, 2);
 }
 
-// Crack polylines (x,y pairs, y relative to the fort top); crack i shows after i+1 health lost
-const CRACKS = [
-  [30, 0, 34, 8, 30, 15], [120, 0, 116, 10, 122, 18], [70, 5, 74, 14, 70, 24],
-  [150, 10, 146, 22, 152, 30], [10, 12, 16, 22, 12, 32], [95, 10, 100, 20, 94, 30, 98, 40],
-  [50, 20, 56, 30, 50, 42], [135, 25, 130, 36, 136, 48], [25, 30, 20, 40, 28, 49],
-  [75, 30, 82, 40, 78, 49],
-];
+// Zigzag cracks across the wall at fixed angles (degrees, 0 = right, 90 = straight up);
+// crack i shows after i+1 health lost. Each is a flat list of x,y points.
+const CRACKS = [100, 60, 140, 30, 165, 80, 120, 45, 15, 175].map(a => {
+  const mid = (CONFIG.fortOuter + CONFIG.fortInner) / 2;
+  const pts = [];
+  for (const [rad, dev] of [[CONFIG.fortOuter - 1, 0], [mid, 4], [CONFIG.fortInner + 1, -3]]) {
+    const ang = (a + dev) * DEG;
+    pts.push(Math.round(CONFIG.fortCX + Math.cos(ang) * rad), Math.round(CONFIG.fortCY - Math.sin(ang) * rad));
+  }
+  return pts;
+});
 
 function drawFort() {
-  ctx.drawImage(fort, 0, CONFIG.fortTop);
+  ctx.drawImage(fort, 0, 0);
   const lost = Math.min(CONFIG.fortHealth - state.health, CRACKS.length);
   for (let i = 0; i < lost; i++) {
     const c = CRACKS[i];
-    for (let k = 0; k + 3 < c.length; k += 2) {
-      pixLine(c[k], CONFIG.fortTop + c[k + 1], c[k + 2], CONFIG.fortTop + c[k + 3], COLORS.night);
-    }
+    for (let k = 0; k + 3 < c.length; k += 2) pixLine(c[k], c[k + 1], c[k + 2], c[k + 3], COLORS.night);
   }
   if (state.flash > 0) {
     ctx.globalAlpha = 0.7 * state.flash / CONFIG.fortFlashTime;
-    rect(COLORS.red, 0, CONFIG.fortTop, CONFIG.W, CONFIG.H - CONFIG.fortTop);
+    ctx.drawImage(fortMask, 0, 0);
     ctx.globalAlpha = 1;
   }
 }
@@ -916,10 +948,10 @@ function promptInstall() {
 function drawTitle() {
   drawTextShadow('SNOWBALL', CONFIG.W / 2, 40, 4, COLORS.snow, 'center');
   drawTextShadow('BEST: ' + state.best, CONFIG.W / 2, 78, 2, COLORS.gold, 'center');
-  button('TAP TO PLAY', CONFIG.W / 2, 150, 140, 1.5, startGame);
+  button('TAP TO PLAY', CONFIG.W / 2, 130, 140, 1.5, startGame);
   if (installEvent) {
     const playH = Math.ceil(btnH() * 1.5);
-    button('INSTALL', CONFIG.W / 2, 150 + playH / 2 + btnH() / 2 + 12, 90, 1, promptInstall, COLORS.ice);
+    button('INSTALL', CONFIG.W / 2, 130 + playH / 2 + btnH() / 2 + 12, 90, 1, promptInstall, COLORS.ice);
   }
   drawMuteButton(CONFIG.W - 3 - btnH(), 3, true);
 }
@@ -947,8 +979,8 @@ function draw() {
   ctx.drawImage(bg, 0, 0);
   drawFlakes();
   for (const b of state.bullies) drawBully(b);
-  drawKid();
   drawFort();
+  drawKid();
   drawArm();
   drawCooldownRing();
   drawAimLine();
