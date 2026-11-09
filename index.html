@@ -19,10 +19,19 @@
 <canvas id="game" width="180" height="320"></canvas>
 <script src="./game.js"></script>
 <script>
-  // Offline support (service workers need http/https, not file://)
+  // Offline support + update detection (service workers need http/https, not file://)
   if ('serviceWorker' in navigator && location.protocol.indexOf('http') === 0) {
+    // A controller change that happens when the page already had a controller means a new version took over
+    var hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener('controllerchange', function () {
+      if (hadController) window.dispatchEvent(new Event('snowball-update'));
+    });
     window.addEventListener('load', function () {
-      navigator.serviceWorker.register('./sw.js').catch(function () {});
+      navigator.serviceWorker.register('./sw.js').then(function (reg) {
+        var check = function () { reg.update().catch(function () {}); };
+        document.addEventListener('visibilitychange', function () { if (!document.hidden) check(); });
+        setInterval(check, 30 * 60 * 1000);
+      }).catch(function () {});
     });
   }
 </script>

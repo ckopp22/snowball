@@ -57,6 +57,9 @@ const CONFIG = {
   bullyMargin: 8,         // keep spawn columns this far from the side edges
   regularSpeed: 14,       // px/s at wave 1; every type's speed is a multiple of this
   hitFlashTime: 0.12,     // s white flash when a Big Kid survives a hit
+  footstepGap: 6,         // px walked between footprints (they alternate left / right)
+  footstepLife: 3,        // s a footprint takes to fade into the snow
+  footstepAlpha: 0.5,     // starting opacity
   turnY: 200,             // bullies walk straight down until this y, then turn toward the kid
   turnRate: 3,            // rad/s they can turn at
   turnSwayFade: 40,       // px of travel past turnY over which the Sled Kid's sway fades out
@@ -344,6 +347,7 @@ const state = {
   mode: 'title',       // title | playing | paused | gameover
   bullies: [],
   particles: [],
+  prints: [],          // footprints: { x, y, t, w }
   buttons: [],         // rebuilt every frame by the draw code, used for tap tests
   score: 0,
   best: loadBest(),
@@ -502,6 +506,7 @@ function update(dt) {
 
   updateBullies(dt);
   updateParticles(dt);
+  updatePrints(dt);
   updateWaves(dt);
   updatePower(dt);
 }
@@ -514,7 +519,7 @@ const waveGap = n => CONFIG.gapMin + (CONFIG.gapStart - CONFIG.gapMin) * Math.po
 
 function resetGame() {
   Object.assign(state, {
-    snowballs: [], bullies: [], particles: [], cooldown: 0, swing: 0,
+    snowballs: [], bullies: [], particles: [], prints: [], cooldown: 0, swing: 0,
     score: 0, newBest: false, health: CONFIG.fortHealth, flash: 0,
     wave: 0, toSpawn: 0, spawnTimer: 0, waveEnded: false, breakTimer: 0, banner: 0, time: 0,
     power: null, powerTimer: CONFIG.powerFirstDelay, gun: 0, gunTimer: 0, treesRemoved: 0, treeReturnTimer: 0, popup: null,
@@ -571,6 +576,8 @@ function spawnBully() {
     state: 'walking',      // walking | falling | fading
     t: 0,
     age: 0,
+    stepAcc: 0,
+    stepSide: 1,
     flash: 0,
     ph: Math.random() * 10, // walk-cycle / sway offset
   });
@@ -759,6 +766,7 @@ function updateBullies(dt) {
     if (b.flash > 0) b.flash -= dt;
     if (b.state === 'walking') {
       b.age += dt;
+      const prevX = b.x, prevY = b.y;
       // Walk straight down; below turnY, steer smoothly toward the kid (fort centre)
       let want = b.y >= CONFIG.turnY ? Math.atan2(CONFIG.fortCY - b.y, CONFIG.fortCX - b.x0) : Math.PI / 2;
       want = avoidTrees(b, T, want);              // walk around trees
@@ -781,6 +789,16 @@ function updateBullies(dt) {
           b.x0 += nx * push; b.x += nx * push; b.y += ny * push;
         }
       }
+      b.stepAcc += Math.hypot(b.x - prevX, b.y - prevY);   // leave a footprint every footstepGap px
+      if (b.stepAcc >= CONFIG.footstepGap) {
+        b.stepAcc -= CONFIG.footstepGap;
+        b.stepSide = -b.stepSide;                           // left foot, right foot
+        state.prints.push({
+          x: b.x - Math.sin(b.ang) * 1.5 * b.stepSide,
+          y: b.y + T.halfH - 1 + Math.cos(b.ang) * 1.5 * b.stepSide,
+          t: 0, w: T.radius >= 8 ? 3 : 2,
+        });
+      }
       if (b.y >= CONFIG.H || Math.hypot(b.x - CONFIG.fortCX, b.y - CONFIG.fortCY) <= CONFIG.fortOuter + T.radius) {  // touches the fort
         state.bullies.splice(i, 1);
         damageFort(T.fortDamage);
@@ -790,6 +808,13 @@ function updateBullies(dt) {
       if (b.state === 'falling' && b.t >= CONFIG.fallTime) { b.state = 'fading'; b.t = 0; }
       else if (b.state === 'fading' && b.t >= CONFIG.fadeTime) state.bullies.splice(i, 1);
     }
+  }
+}
+
+function updatePrints(dt) {
+  for (let i = state.prints.length - 1; i >= 0; i--) {
+    state.prints[i].t += dt;
+    if (state.prints[i].t >= CONFIG.footstepLife) state.prints.splice(i, 1);
   }
 }
 
@@ -1138,6 +1163,14 @@ function promptInstall() {
   if (e) e.prompt();
 }
 
+// Update banner: index.html fires 'snowball-update' when a new service worker takes over (not on the first install).
+// Shown on every screen except mid-game so it never interrupts a run; tapping reloads into the new version.
+let updateReady = false;
+window.addEventListener('snowball-update', () => { updateReady = true; });
+function drawUpdateBanner() {
+  button('TAP TO UPDATE', CONFIG.W / 2, CONFIG.H - 4 - Math.ceil(btnH() / 2), 150, 1, () => location.reload(), COLORS.hatGreen);
+}
+
 function drawTitle() {
   drawTextShadow('SNOWBALL', CONFIG.W / 2, 60, 4, COLORS.coatBlue, 'center');
   drawTextShadow('BEST: ' + state.best, CONFIG.W / 2, 92, 2, COLORS.gold, 'center');
@@ -1175,6 +1208,15 @@ function drawShadow() {
   ctx.globalAlpha = 1;
 }
 
+// Footprints fade out into the snow; drawn under everything else
+function drawPrints() {
+  for (const p of state.prints) {
+    ctx.globalAlpha = CONFIG.footstepAlpha * (1 - p.t / CONFIG.footstepLife);
+    rect(COLORS.shadow, p.x, p.y, p.w, 2);
+  }
+  ctx.globalAlpha = 1;
+}
+
 // Trees and bullies drawn back to front by their feet, so a bully above a tree is hidden behind its foliage
 function drawTreesAndBullies() {
   const items = [];
@@ -1193,6 +1235,7 @@ function draw() {
   ctx.drawImage(bg, 0, 0);
   drawFlakes();
   drawShadow();
+  drawPrints();
   drawTreesAndBullies();
   drawPower();
   drawFort();
@@ -1202,12 +1245,15 @@ function draw() {
   drawAimLine();
   for (const s of state.snowballs) drawSnowball(s);
   drawParticles();
-  if (state.mode === 'title') { drawTitle(); return; }
-  drawHud();
-  drawBanner();
-  drawPopup();
-  if (state.mode === 'paused') drawPaused();
-  else if (state.mode === 'gameover') drawGameOver();
+  if (state.mode === 'title') drawTitle();
+  else {
+    drawHud();
+    drawBanner();
+    drawPopup();
+    if (state.mode === 'paused') drawPaused();
+    else if (state.mode === 'gameover') drawGameOver();
+  }
+  if (updateReady && state.mode !== 'playing') drawUpdateBanner();
 }
 
 // ---------- Loop ----------
