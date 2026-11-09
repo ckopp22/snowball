@@ -1,11 +1,12 @@
 // Bump CACHE_VERSION whenever any game file changes so installed copies update.
-const CACHE_VERSION = 'snowball-v18';
+const CACHE_VERSION = 'snowball-v19';
 
 const FILES = [
   './',
   './index.html',
   './style.css',
   './game.js',
+  './peerjs.min.js',
   './manifest.webmanifest',
   './icons/icon-192.png',
   './icons/icon-512.png',

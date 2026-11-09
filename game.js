@@ -14,10 +14,14 @@ const CONFIG = {
   aimDots: 5,
   aimDotSpacing: 8,       // 5 dots -> last dot 40 px from the hand
   aimDotSize: 2,
-  handX: 97,              // where throws and the aim line start
-  handY: 282,
-  shoulderX: 93,
-  shoulderY: 285,
+  kidX: 86,               // solo: the kid's top-left corner
+  kidY: 275,
+  coopKidXs: [79, 93],    // co-op: two boys side by side behind the fort (top-left x of each)
+  coopKidY: 279,
+  handDX: 11,             // where throws and the aim line start, relative to the kid's top-left
+  handDY: 7,
+  shoulderDX: 7,
+  shoulderDY: 10,
   armPull: 2,             // px the arm draws back while aiming
   armSwingTime: 0.18,     // s
   armSwingReach: 3,       // px the arm pushes forward on release
@@ -49,6 +53,13 @@ const CONFIG = {
   gunTime: 5,             // s of machine-gun snowballs
   gunInterval: 0.12,      // s between machine-gun shots
   treeReturnTime: 6,      // s between each removed tree growing back
+  // Co-op (WebRTC through PeerJS: the host runs the game, the guest sends aim/throws and draws snapshots)
+  netPrefix: 'snowball-coop-',                // peer id = prefix + the 4-letter code
+  codeLetters: 'BCDFGHJKLMNPQRSTVWXZ',        // consonants only, so codes never spell a word
+  codeLength: 4,
+  netInterval: 0.05,      // s between host snapshots (20 per second)
+  netTimeout: 6,          // s without any message before the link counts as lost
+  netConnectTimeout: 12,  // s a join attempt may take
   flakes: 30,
   flakeSpeedMin: 12,
   flakeSpeedMax: 26,
@@ -167,6 +178,26 @@ function saveBest(v) {
   try { localStorage.setItem(CONFIG.storageKey, String(v)); } catch (e) { /* ignore */ }
 }
 
+// ---------- Players / co-op state ----------
+// role: 'solo' | 'host' | 'guest' (set once connected). The host is slot 0 and runs the whole game; the guest is slot 1.
+const net = { role: 'solo', status: 'idle', error: '', code: '', peer: null, conn: null,
+              localSlot: 0, lastRx: 0, acc: 0, evq: [], lost: false };
+const isCoop = () => net.role !== 'solo';
+const slots = () => (isCoop() ? [0, 1] : [0]);
+const pl = slot => (slot === net.localSlot ? state : state.remote);   // the local player's fields live on state itself
+const freshRemote = () => ({ aimAngle: 90, aimValid: false, aiming: false, cooldown: 0, swing: 0, gun: 0, gunTimer: 0 });
+function kidPos(slot) {
+  return isCoop() ? { x: CONFIG.coopKidXs[slot], y: CONFIG.coopKidY } : { x: CONFIG.kidX, y: CONFIG.kidY };
+}
+function handPos(slot) {
+  const k = kidPos(slot);
+  return { x: k.x + CONFIG.handDX, y: k.y + CONFIG.handDY };
+}
+const KID_COLORS = [
+  { hat: COLORS.coatBlue, scarf: COLORS.orange, coat: COLORS.coatBlue },   // boy 1: blue hat, orange scarf
+  { hat: COLORS.gold, scarf: COLORS.hatGreen, coat: '#e6b92e' },           // boy 2: gold hat, green scarf
+];
+
 // ---------- Audio (Web Audio, no files; context is created on the first tap) ----------
 const audio = { ctx: null, master: null, noise: null, muted: false };
 try { audio.muted = localStorage.getItem(CONFIG.mutedKey) === '1'; } catch (e) { /* ignore */ }
@@ -232,7 +263,8 @@ const SFX = {
   power: () => { tone('sine', 880, 880, 0.1, 0.3); tone('sine', 1175, 1175, 0.1, 0.3, 0.07); tone('sine', 1568, 1568, 0.22, 0.3, 0.14); },
   click: () => tone('square', 1000, 900, 0.03, 0.2),
 };
-function sfx(name) {
+function sfx(name, noForward) {
+  if (net.role === 'host' && !noForward && name !== 'click') net.evq.push({ e: 's', n: name });   // the guest hears it too
   if (!audio.ctx || audio.muted) return;
   try { SFX[name](); } catch (e) { /* ignore */ }
 }
@@ -250,6 +282,7 @@ const FONT = {
   4: '101101111001001', 5: '111100110001110', 6: '011100111101111', 7: '111001010010010',
   8: '111101111101111', 9: '111101111001110',
   ':': '000010000010000', '!': '010010010000010', '-': '000000111000000',
+  '.': '000000000000010', '_': '000000000000111',
 };
 
 function drawText(str, x, y, s, color, align) {
@@ -368,6 +401,8 @@ const state = {
   treesRemoved: 0,     // trees currently removed by the power-up (they return one by one)
   treeReturnTimer: 0,
   popup: null,         // { text, t } message after a pickup
+  remote: freshRemote(),   // the other player's aim/cooldown/gun (the host's view of the guest, and vice versa)
+  entry: '',           // co-op join code being typed
   flakes: [],
   snowballs: [],
   cooldown: 0,
@@ -415,16 +450,33 @@ function endAim() {
   state.pointerId = null;
 }
 
-function throwSnowball(auto) {          // auto = machine-gun shot: no cooldown
-  const a = state.aimAngle * DEG;
-  const dirX = Math.cos(a), dirY = -Math.sin(a);
+function throwSnowball(slot, auto, angle) {          // auto = machine-gun shot: no cooldown
+  const p = pl(slot);
+  if (angle !== undefined) p.aimAngle = angle;
+  if (net.role === 'guest') {                         // the host simulates the world: ask it to throw
+    netSend({ k: 't', a: r1(p.aimAngle) });
+    p.cooldown = CONFIG.throwCooldown;                // local feedback right away
+    p.swing = CONFIG.armSwingTime;
+    sfx('throw');
+    return;
+  }
+  const a = p.aimAngle * DEG, h = handPos(slot);
   state.snowballs.push({
-    x: CONFIG.handX, y: CONFIG.handY,
-    vx: dirX * CONFIG.snowballSpeed, vy: dirY * CONFIG.snowballSpeed,
+    x: h.x, y: h.y, owner: slot,
+    vx: Math.cos(a) * CONFIG.snowballSpeed, vy: -Math.sin(a) * CONFIG.snowballSpeed,
   });
-  if (!auto) state.cooldown = CONFIG.throwCooldown;
-  state.swing = CONFIG.armSwingTime;
-  sfx('throw');
+  if (!auto) p.cooldown = CONFIG.throwCooldown;
+  p.swing = CONFIG.armSwingTime;
+  sfx('throw', slot === 1 && !auto);                  // the guest already played its own manual throw sound
+}
+
+// Guest only: tell the host where we are aiming (throttled) so it can draw our dotted line and use it for the machine gun
+function sendAim(force) {
+  if (net.role !== 'guest') return;
+  const t = performance.now();
+  if (!force && t - (net.lastAimSent || 0) < 60) return;
+  net.lastAimSent = t;
+  netSend({ k: 'a', a: r1(state.aimAngle), v: state.aiming && state.aimValid ? 1 : 0 });
 }
 
 function hitButton(p) {
@@ -448,6 +500,7 @@ window.addEventListener('pointermove', e => {
   if (!state.aiming || e.pointerId !== state.pointerId) return;
   e.preventDefault();
   updateAim(toCanvas(e));
+  sendAim();
 }, { passive: false });
 
 window.addEventListener('pointerup', e => {
@@ -455,8 +508,9 @@ window.addEventListener('pointerup', e => {
   e.preventDefault();
   updateAim(toCanvas(e));
   // Throw only if pull is long enough and the cooldown is over
-  if (state.aimValid && state.cooldown <= 0 && state.gun <= 0) throwSnowball();   // machine gun fires by itself
+  if (state.aimValid && state.cooldown <= 0 && state.gun <= 0) throwSnowball(net.localSlot);   // machine gun fires by itself
   endAim();
+  sendAim(true);
 }, { passive: false });
 
 window.addEventListener('pointercancel', e => {
@@ -480,6 +534,7 @@ function update(dt) {
 
   if (state.cooldown > 0) state.cooldown = Math.max(0, state.cooldown - dt);
   if (state.swing > 0) state.swing = Math.max(0, state.swing - dt);
+  for (const k of ['cooldown', 'swing']) if (state.remote[k] > 0) state.remote[k] = Math.max(0, state.remote[k] - dt);
 
   // Snowballs fly straight until they hit a bully or leave the screen
   const m = CONFIG.snowballRadius + 1;
@@ -490,7 +545,7 @@ function update(dt) {
     s.y += s.vy * dt;
     const bh = firstBullyHit(px, py, s.x, s.y), th = firstTreeHit(px, py, s.x, s.y), ph = firstPowerHit(px, py, s.x, s.y);
     if (ph !== null && (!bh || ph < bh.t) && (!th || ph < th.t)) {   // snowball pops the snowflake
-      collectPower();
+      collectPower(s.owner || 0);
       state.snowballs.splice(i, 1);
     } else if (bh && (!th || bh.t <= th.t)) {  // one snowball, one bully
       hitBully(bh.b);
@@ -522,7 +577,7 @@ function resetGame() {
     snowballs: [], bullies: [], particles: [], prints: [], cooldown: 0, swing: 0,
     score: 0, newBest: false, health: CONFIG.fortHealth, flash: 0,
     wave: 0, toSpawn: 0, spawnTimer: 0, waveEnded: false, breakTimer: 0, banner: 0, time: 0,
-    power: null, powerTimer: CONFIG.powerFirstDelay, gun: 0, gunTimer: 0, treesRemoved: 0, treeReturnTimer: 0, popup: null,
+    power: null, powerTimer: CONFIG.powerFirstDelay, gun: 0, gunTimer: 0, treesRemoved: 0, treeReturnTimer: 0, popup: null, remote: freshRemote(),
   });
   endAim();
 }
@@ -547,6 +602,8 @@ function startWave(n) {
   state.banner = CONFIG.bannerTime;
 }
 
+let bullyId = 0;
+
 // Weighted random type: newer types get likelier as waves rise, Regular stays the most common
 function pickType(wave) {
   const ws = [];
@@ -567,7 +624,9 @@ function spawnBully() {
   const m = CONFIG.bullyMargin + (T.swayAmp || 0);   // leave room for the sled's sway
   const x0 = m + Math.random() * (CONFIG.W - 2 * m);
   state.bullies.push({
+    id: ++bullyId,
     type,
+    vx: 0, vy: 0,                                    // velocity, sent to the co-op guest for smooth motion
     x: x0, x0,                                       // x0 = centre column (sway is around it)
     y: -T.halfH,
     ang: Math.PI / 2,                                // heading (screen coords): straight down
@@ -624,6 +683,7 @@ function firstBullyHit(ax, ay, bx, by) {
 
 // ---- Power-ups ----
 const rand = (a, b) => a + Math.random() * (b - a);
+const MENU_MODES = ['title', 'coopmenu', 'coophost', 'coopjoin'];
 
 // Segment-vs-circle; returns t (0..1 along the snowball's path this frame) or null
 function firstPowerHit(ax, ay, bx, by) {
@@ -636,7 +696,7 @@ function firstPowerHit(ax, ay, bx, by) {
   return (ax + dx * t - pw.x) ** 2 + (ay + dy * t - pw.y) ** 2 <= R * R ? t : null;
 }
 
-function collectPower() {
+function collectPower(owner) {
   const pw = state.power;
   state.power = null;
   state.powerTimer = rand(CONFIG.powerMinGap, CONFIG.powerMaxGap);
@@ -647,9 +707,10 @@ function collectPower() {
   if (activeTrees().length) opts.push('trees');
   const pick = opts[Math.floor(Math.random() * opts.length)];
   if (pick === 'gun') {
-    state.gun = CONFIG.gunTime;
-    state.gunTimer = 0;
-    state.popup = { text: 'MACHINE GUN!', t: 1.4 };
+    const p = pl(owner);                                        // the machine gun goes to whoever popped it
+    p.gun = CONFIG.gunTime;
+    p.gunTimer = 0;
+    state.popup = { text: isCoop() ? 'GUN FOR P' + (owner + 1) + '!' : 'MACHINE GUN!', t: 1.4 };
   } else if (pick === 'heal') {
     state.health = CONFIG.fortHealth;
     puff(CONFIG.fortCX, CONFIG.fortCY - 12);
@@ -679,10 +740,13 @@ function updatePower(dt) {
     }
   }
   // Machine gun: fires along the current aim direction by itself
-  if (state.gun > 0) {
-    state.gun = Math.max(0, state.gun - dt);
-    state.gunTimer -= dt;
-    if (state.gunTimer <= 0) { throwSnowball(true); state.gunTimer = CONFIG.gunInterval; }
+  for (const sl of slots()) {
+    const p = pl(sl);
+    if (p.gun > 0) {
+      p.gun = Math.max(0, p.gun - dt);
+      p.gunTimer -= dt;
+      if (p.gunTimer <= 0) { throwSnowball(sl, true); p.gunTimer = CONFIG.gunInterval; }
+    }
   }
   // Removed trees grow back one by one, in the order they were added
   if (state.treesRemoved > 0) {
@@ -699,7 +763,7 @@ function updatePower(dt) {
 
 // Wave N shows N-1 trees (none in wave 1), up to treeMax; the power-up can hide them for a while
 function activeTrees() {
-  if (state.mode === 'title') return CONFIG.treePositions.slice(0, CONFIG.treeMax);   // main menu shows them all
+  if (MENU_MODES.includes(state.mode)) return CONFIG.treePositions.slice(0, CONFIG.treeMax);   // menus show them all
   return CONFIG.treePositions.slice(0, Math.max(0, Math.min(CONFIG.treeMax, state.wave - 1) - state.treesRemoved));
 }
 
@@ -750,6 +814,7 @@ function hitBully(b) {
 }
 
 function puff(x, y) {
+  if (net.role === 'host') net.evq.push({ e: 'p', x: r1(x), y: r1(y) });   // the guest shows the same puff
   for (let i = 0; i < CONFIG.puffCount; i++) {
     const a = Math.random() * Math.PI * 2;
     const sp = CONFIG.puffSpeed * (0.5 + Math.random() * 0.5);
@@ -789,16 +854,9 @@ function updateBullies(dt) {
           b.x0 += nx * push; b.x += nx * push; b.y += ny * push;
         }
       }
-      b.stepAcc += Math.hypot(b.x - prevX, b.y - prevY);   // leave a footprint every footstepGap px
-      if (b.stepAcc >= CONFIG.footstepGap) {
-        b.stepAcc -= CONFIG.footstepGap;
-        b.stepSide = -b.stepSide;                           // left foot, right foot
-        state.prints.push({
-          x: b.x - Math.sin(b.ang) * 1.5 * b.stepSide,
-          y: b.y + T.halfH - 1 + Math.cos(b.ang) * 1.5 * b.stepSide,
-          t: 0, w: T.radius >= 8 ? 3 : 2,
-        });
-      }
+      b.vx = dt > 0 ? (b.x - prevX) / dt : 0;
+      b.vy = dt > 0 ? (b.y - prevY) / dt : 0;
+      footstep(b, T, prevX, prevY);
       if (b.y >= CONFIG.H || Math.hypot(b.x - CONFIG.fortCX, b.y - CONFIG.fortCY) <= CONFIG.fortOuter + T.radius) {  // touches the fort
         state.bullies.splice(i, 1);
         damageFort(T.fortDamage);
@@ -808,6 +866,20 @@ function updateBullies(dt) {
       if (b.state === 'falling' && b.t >= CONFIG.fallTime) { b.state = 'fading'; b.t = 0; }
       else if (b.state === 'fading' && b.t >= CONFIG.fadeTime) state.bullies.splice(i, 1);
     }
+  }
+}
+
+// Leave a footprint every footstepGap px walked (also used by the co-op guest, from received positions)
+function footstep(b, T, prevX, prevY) {
+  b.stepAcc += Math.hypot(b.x - prevX, b.y - prevY);
+  if (b.stepAcc >= CONFIG.footstepGap) {
+    b.stepAcc -= CONFIG.footstepGap;
+    b.stepSide = -b.stepSide;                           // left foot, right foot
+    state.prints.push({
+      x: b.x - Math.sin(b.ang) * 1.5 * b.stepSide,
+      y: b.y + T.halfH - 1 + Math.cos(b.ang) * 1.5 * b.stepSide,
+      t: 0, w: T.radius >= 8 ? 3 : 2,
+    });
   }
 }
 
@@ -846,7 +918,214 @@ function gameOver() {
 
 // Auto-pause when the tab is hidden
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden && state.mode === 'playing') setMode('paused');
+  if (document.hidden && state.mode === 'playing' && !isCoop()) setMode('paused');   // co-op can't pause
+});
+
+// ---------- Co-op networking ----------
+const TYPE_IDS = Object.keys(CONFIG.bullyTypes);
+const STATE_IDS = ['walking', 'falling', 'fading'];
+const r1 = v => Math.round(v * 10) / 10;
+
+function netSend(msg) {
+  try { if (net.conn && net.conn.open) net.conn.send(msg); } catch (e) { /* ignore */ }
+}
+
+function netCleanup() {
+  const { conn, peer } = net;
+  net.conn = null; net.peer = null;
+  try { if (conn) conn.close(); } catch (e) { /* ignore */ }
+  try { if (peer) peer.destroy(); } catch (e) { /* ignore */ }
+}
+
+function resetNet() {
+  netCleanup();
+  Object.assign(net, { role: 'solo', status: 'idle', error: '', code: '', localSlot: 0, lost: false, evq: [], acc: 0 });
+}
+
+function leaveCoop() { resetNet(); state.entry = ''; resetGame(); setMode('title'); }
+function backToCoopMenu() { resetNet(); state.entry = ''; setMode('coopmenu'); }
+function openCoopMenu() { net.status = 'idle'; net.error = ''; setMode('coopmenu'); }
+
+function netFail(msg) { net.status = 'error'; net.error = msg; }
+
+function newCode() {
+  let c = '';
+  for (let i = 0; i < CONFIG.codeLength; i++) c += CONFIG.codeLetters[Math.floor(Math.random() * CONFIG.codeLetters.length)];
+  return c;
+}
+
+// Create a game: register a peer named after a random 4-letter code and wait for one guest
+function hostGame(tries) {
+  netCleanup();
+  if (typeof Peer === 'undefined') { netFail('CO-OP NOT AVAILABLE'); return; }
+  net.code = newCode(); net.status = 'opening'; net.error = '';
+  let peer;
+  try { peer = new Peer(CONFIG.netPrefix + net.code, { debug: 0 }); } catch (e) { netFail('NO CONNECTION'); return; }
+  net.peer = peer;
+  peer.on('open', () => { if (net.peer === peer) net.status = 'waiting'; });
+  peer.on('connection', conn => {
+    if (net.peer !== peer || net.conn) { conn.close(); return; }          // only two players
+    net.conn = conn;
+    conn.on('open', () => {
+      Object.assign(net, { role: 'host', localSlot: 0, lost: false, lastRx: performance.now(), evq: [], acc: 0 });
+      startGame();
+    });
+    conn.on('data', hostOnData);
+    conn.on('close', () => { if (net.conn === conn) net.lost = true; });
+  });
+  peer.on('error', err => {
+    if (net.peer !== peer) return;
+    if (err.type === 'unavailable-id' && (tries || 0) < 5) { hostGame((tries || 0) + 1); return; }   // code taken: pick another
+    netFail('NO CONNECTION');
+  });
+}
+
+// Join a game: connect to the peer named after the code
+function joinGame(code) {
+  netCleanup();
+  if (typeof Peer === 'undefined') { netFail('CO-OP NOT AVAILABLE'); return; }
+  net.code = code; net.status = 'connecting'; net.error = '';
+  let peer;
+  try { peer = new Peer({ debug: 0 }); } catch (e) { netFail('NO CONNECTION'); return; }
+  net.peer = peer;
+  const timer = setTimeout(() => { if (net.peer === peer && net.status === 'connecting') netFail('TIMED OUT'); }, CONFIG.netConnectTimeout * 1000);
+  peer.on('open', () => {
+    if (net.peer !== peer) return;
+    const conn = peer.connect(CONFIG.netPrefix + code, { serialization: 'json', reliable: true });
+    net.conn = conn;
+    conn.on('open', () => {
+      clearTimeout(timer);
+      Object.assign(net, { role: 'guest', localSlot: 1, status: 'connected', lost: false, lastRx: performance.now(), evq: [], acc: 0 });
+    });
+    conn.on('data', guestOnData);
+    conn.on('close', () => { if (net.conn === conn) net.lost = true; });
+  });
+  peer.on('error', err => {
+    clearTimeout(timer);
+    if (net.peer !== peer) return;
+    netFail(err.type === 'peer-unavailable' ? 'GAME NOT FOUND' : 'NO CONNECTION');
+  });
+}
+
+// Host: messages from the guest ('a' = aim, 't' = throw, 'h' = heartbeat)
+function hostOnData(d) {
+  if (!d || typeof d !== 'object') return;
+  net.lastRx = performance.now(); net.lost = false;
+  const r = state.remote;
+  if (d.k === 'a' && Number.isFinite(d.a)) {
+    r.aimAngle = Math.min(CONFIG.maxAngle, Math.max(CONFIG.minAngle, d.a));
+    r.aimValid = r.aiming = !!d.v;
+  } else if (d.k === 't' && Number.isFinite(d.a) && state.mode === 'playing' && r.cooldown <= 0.1 && r.gun <= 0) {
+    throwSnowball(1, false, Math.min(CONFIG.maxAngle, Math.max(CONFIG.minAngle, d.a)));
+  }
+}
+
+// Host -> guest: everything the guest needs to draw the world
+function buildSnapshot() {
+  const ev = net.evq; net.evq = [];
+  return {
+    k: 's', m: state.mode, sc: state.score, w: state.wave, h: state.health,
+    fl: r1(state.flash * 10) / 10, bn: r1(state.banner), tm: r1(state.time), tr: state.treesRemoved,
+    pu: state.popup ? { s: state.popup.text, t: r1(state.popup.t) } : null,
+    pw: state.power ? [r1(state.power.x), r1(state.power.baseY), r1(state.power.age)] : null,
+    g: [r1(state.gun), r1(state.remote.gun)],                                   // machine-gun seconds left [host, guest]
+    ha: [r1(state.aimAngle), state.aiming && state.aimValid ? 1 : 0, state.swing],   // host aim, for its arm and dotted line
+    B: state.bullies.map(b => [b.id, TYPE_IDS.indexOf(b.type), r1(b.x), r1(b.y), r1(b.vx), r1(b.vy),
+                               STATE_IDS.indexOf(b.state), r1(b.t), b.flash > 0 ? 1 : 0, r1(b.ph), r1(b.ang)]),
+    S: state.snowballs.map(s => [r1(s.x), r1(s.y), r1(s.vx), r1(s.vy)]),
+    ev,
+  };
+}
+
+function guestOnData(d) {
+  if (!d || typeof d !== 'object') return;
+  net.lastRx = performance.now(); net.lost = false;
+  if (d.k === 's') applySnapshot(d);
+}
+
+function applySnapshot(d) {
+  const prev = state.mode;
+  if (d.m === 'playing' && prev !== 'playing') { resetGame(); }        // first snapshot, or the host pressed Play Again
+  if (d.m === 'gameover' && prev === 'playing') {
+    endAim();
+    state.newBest = d.sc > state.best;
+    if (state.newBest) { state.best = d.sc; saveBest(state.best); }
+  }
+  state.mode = d.m;
+  state.score = d.sc; state.wave = d.w; state.health = d.h; state.flash = d.fl; state.banner = d.bn;
+  state.time = d.tm; state.treesRemoved = d.tr;
+  state.popup = d.pu ? { text: d.pu.s, t: d.pu.t } : null;
+  state.power = d.pw ? { x: d.pw[0], baseY: d.pw[1], y: d.pw[1] + Math.sin(d.pw[2] * 2.5) * 3, age: d.pw[2] } : null;
+  state.gun = d.g[net.localSlot];
+  const r = state.remote;                                              // the host, from the guest's point of view
+  r.gun = d.g[1 - net.localSlot]; r.aimAngle = d.ha[0]; r.aiming = r.aimValid = !!d.ha[1]; r.swing = d.ha[2];
+
+  const old = new Map(state.bullies.map(b => [b.id, b]));              // keep local footprint state per bully
+  state.bullies = d.B.map(a => {
+    const b = old.get(a[0]) || { id: a[0], stepAcc: 0, stepSide: 1 };
+    b.type = TYPE_IDS[a[1]]; b.x = a[2]; b.y = a[3]; b.vx = a[4]; b.vy = a[5];
+    b.state = STATE_IDS[a[6]]; b.t = a[7]; b.flash = a[8] ? CONFIG.hitFlashTime : 0; b.ph = a[9]; b.ang = a[10];
+    return b;
+  });
+  state.snowballs = d.S.map(a => ({ x: a[0], y: a[1], vx: a[2], vy: a[3] }));
+  for (const e of d.ev || []) {
+    if (e.e === 'p') puff(e.x, e.y);
+    else if (e.e === 's') sfx(e.n, true);
+  }
+}
+
+// Guest: advance what the last snapshot described, so motion stays smooth between snapshots
+function updateGuest(dt) {
+  updateFlakes(dt);
+  state.time += dt;
+  for (const p of [state, state.remote]) {
+    if (p.cooldown > 0) p.cooldown = Math.max(0, p.cooldown - dt);
+    if (p.swing > 0) p.swing = Math.max(0, p.swing - dt);
+  }
+  if (state.flash > 0) state.flash = Math.max(0, state.flash - dt);
+  if (state.banner > 0) state.banner -= dt;
+  if (state.popup && (state.popup.t -= dt) <= 0) state.popup = null;
+  if (state.power) {
+    state.power.age += dt;
+    state.power.y = state.power.baseY + Math.sin(state.power.age * 2.5) * 3;
+  }
+  for (const s of state.snowballs) { s.x += s.vx * dt; s.y += s.vy * dt; }
+  for (const b of state.bullies) {
+    if (b.state === 'walking') {
+      const px = b.x, py = b.y;
+      b.x += b.vx * dt; b.y += b.vy * dt;
+      footstep(b, CONFIG.bullyTypes[b.type], px, py);
+    } else b.t += dt;
+  }
+  updateParticles(dt);
+  updatePrints(dt);
+}
+
+// Every frame while connected: host sends snapshots, guest sends a heartbeat; either side notices a dead link
+function netTick(dt) {
+  net.acc += dt;
+  if (net.role === 'host' && net.acc >= CONFIG.netInterval) { net.acc = 0; netSend(buildSnapshot()); }
+  else if (net.role === 'guest' && net.acc >= 1) { net.acc = 0; netSend({ k: 'h' }); }
+  if (!net.lost && performance.now() - net.lastRx > CONFIG.netTimeout * 1000) net.lost = true;
+}
+
+// Typing the join code (on-screen keys, or a real keyboard)
+function addLetter(ch) {
+  if (state.entry.length >= CONFIG.codeLength || net.status === 'connecting' || net.status === 'connected') return;
+  state.entry += ch;
+  net.error = ''; net.status = 'idle';
+  if (state.entry.length === CONFIG.codeLength) joinGame(state.entry);
+}
+function delLetter() {
+  if (net.status === 'connecting' || net.status === 'connected' || net.status === 'error') resetNet();
+  state.entry = state.entry.slice(0, -1);
+}
+window.addEventListener('keydown', e => {
+  if (state.mode !== 'coopjoin') return;
+  const ch = e.key.length === 1 ? e.key.toUpperCase() : '';
+  if (ch && CONFIG.codeLetters.includes(ch)) addLetter(ch);
+  else if (e.key === 'Backspace') delLetter();
+  else if (e.key === 'Escape') backToCoopMenu();
 });
 
 // ---------- Draw ----------
@@ -857,67 +1136,72 @@ function drawFlakes() {
   }
 }
 
-// Kid (blue hat, orange scarf), 8x15, standing inside the fort. Hand drawn separately via arm.
-function drawKid() {
-  const x = 86, y = 275;
+// Kid, 8x15, standing inside the fort (slot 0: blue hat, orange scarf; slot 1: gold hat, green scarf). Hand drawn via the arm.
+function drawKid(slot) {
+  const { x, y } = kidPos(slot), c = KID_COLORS[slot];
   rect(COLORS.snow, x + 3, y, 2, 1);          // pom
-  rect(COLORS.coatBlue, x + 1, y + 1, 6, 2);  // hat
+  rect(c.hat, x + 1, y + 1, 6, 2);            // hat
   rect(COLORS.snow, x, y + 3, 8, 1);          // hat cuff
   rect(COLORS.skin, x + 1, y + 4, 6, 3);      // face
   rect(COLORS.black, x + 2, y + 5, 1, 1);     // eyes
   rect(COLORS.black, x + 5, y + 5, 1, 1);
-  rect(COLORS.coatBlue, x + 1, y + 9, 6, 4);  // coat
-  rect(COLORS.orange, x, y + 7, 8, 2);        // scarf
-  rect(COLORS.orange, x + 1, y + 9, 2, 3);    // scarf tail
+  rect(c.coat, x + 1, y + 9, 6, 4);           // coat
+  rect(c.scarf, x, y + 7, 8, 2);              // scarf
+  rect(c.scarf, x + 1, y + 9, 2, 3);          // scarf tail
   rect(COLORS.black, x + 2, y + 13, 2, 2);    // legs
   rect(COLORS.black, x + 4, y + 13, 2, 2);
 }
 
-function drawArm() {
+function drawArm(slot) {
   // Arm pulls back while aiming, swings forward on release.
-  const a = state.aimAngle * DEG;
+  const p = pl(slot);
+  const a = p.aimAngle * DEG;
   const dx = Math.cos(a), dy = -Math.sin(a);
   let off = 0;
-  if (state.swing > 0) {
-    const t = 1 - state.swing / CONFIG.armSwingTime;       // 0..1
+  if (p.swing > 0) {
+    const t = 1 - p.swing / CONFIG.armSwingTime;           // 0..1
     off = t < 0.4
       ? -CONFIG.armPull + (CONFIG.armSwingReach + CONFIG.armPull) * (t / 0.4)
       : CONFIG.armSwingReach * (1 - (t - 0.4) / 0.6);
-  } else if (state.aiming && state.aimValid) {
+  } else if (p.aiming && p.aimValid) {
     off = -CONFIG.armPull;
   }
-  const hx = CONFIG.handX + dx * off, hy = CONFIG.handY + dy * off;
+  const hand = handPos(slot), k = kidPos(slot);
+  const sx = k.x + CONFIG.shoulderDX, sy = k.y + CONFIG.shoulderDY;
+  const hx = hand.x + dx * off, hy = hand.y + dy * off;
   // arm as a few coat-colored pixels from shoulder to hand
   const steps = 4;
   for (let i = 0; i <= steps; i++) {
     const t = i / steps;
-    rect(COLORS.coatBlue, CONFIG.shoulderX + (hx - CONFIG.shoulderX) * t - 1,
-         CONFIG.shoulderY + (hy - CONFIG.shoulderY) * t - 1, 2, 2);
+    rect(KID_COLORS[slot].coat, sx + (hx - sx) * t - 1, sy + (hy - sy) * t - 1, 2, 2);
   }
   rect(COLORS.skin, hx - 1, hy - 1, 2, 2); // hand
 }
 
-function drawAimLine() {
-  if (!state.aiming || !state.aimValid) return;
-  const a = state.aimAngle * DEG;
+function drawAimLine(slot) {
+  const p = pl(slot);
+  if (!p.aiming || !p.aimValid) return;
+  const a = p.aimAngle * DEG, h = handPos(slot);
   const dx = Math.cos(a), dy = -Math.sin(a);
   const n = CONFIG.aimDots;
+  const color = slot === net.localSlot ? COLORS.black : COLORS.shadow;   // the other player's line is lighter
   for (let i = 1; i <= n; i++) {
     const d = i * CONFIG.aimDotSpacing;
     ctx.globalAlpha = 1 - (i - 1) / (n + 1);   // fade toward the end
-    rect(COLORS.black, CONFIG.handX + dx * d - 1, CONFIG.handY + dy * d - 1, CONFIG.aimDotSize, CONFIG.aimDotSize);
+    rect(color, h.x + dx * d - 1, h.y + dy * d - 1, CONFIG.aimDotSize, CONFIG.aimDotSize);
   }
   ctx.globalAlpha = 1;
 }
 
-function drawCooldownRing() {
-  if (state.cooldown <= 0) return;
+function drawCooldownRing(slot) {
+  if (slot !== net.localSlot || state.cooldown <= 0) return;   // each player sees their own ring
+  const h = handPos(slot);
   const frac = 1 - state.cooldown / CONFIG.throwCooldown;
   const n = CONFIG.ringSteps;
   for (let i = 0; i < n; i++) {
     const ang = -Math.PI / 2 + (i / n) * Math.PI * 2;
-    const px = CONFIG.handX + Math.cos(ang) * CONFIG.ringRadius;
-    const py = CONFIG.handY + Math.sin(ang) * CONFIG.ringRadius;
+    const px = h.x + Math.cos(ang) * CONFIG.ringRadius;
+    const py = h.y + Math.sin(ang) * CONFIG.ringRadius;
     rect(i / n < frac ? COLORS.gold : COLORS.shadow, px, py, 1, 1);
   }
 }
@@ -1026,7 +1310,7 @@ function drawBully(b) {
   const T = CONFIG.bullyTypes[b.type], L = LOOK[b.type];
   const x = Math.round(b.x), y = Math.round(b.y);
   const white = b.flash > 0;                              // hit flash: draw everything snow white
-  ctx.globalAlpha = b.state === 'fading' ? 1 - b.t / CONFIG.fadeTime : 1;
+  ctx.globalAlpha = b.state === 'fading' ? Math.max(0, 1 - b.t / CONFIG.fadeTime) : 1;
   let ox, oy;
   if (b.state === 'walking') { ox = x - Math.round(L.w / 2); oy = y - T.halfH; }
   else { ox = x - Math.round(L.lw / 2); oy = y - Math.round(L.lh / 2); }
@@ -1086,16 +1370,18 @@ function drawHud() {
   for (let i = 0; i < CONFIG.fortHealth; i++) drawFlake(3 + i * 6, 14, i < state.health);
   if (state.gun > 0) drawTextShadow('GUN ' + Math.ceil(state.gun), 3, 24, 1, COLORS.coatBlue);
 
-  // Pause button (square, at least 44 px on screen); only tappable while playing
+  // Pause button (square, at least 44 px on screen); only tappable while playing. Co-op can't pause.
   const s = btnH(), x = CONFIG.W - 3 - s, y = 13;
-  ctx.globalAlpha = 0.7;
-  rect(COLORS.night, x, y, s, s);
-  ctx.globalAlpha = 1;
-  const bw = Math.max(2, Math.round(s / 6)), bh = Math.round(s / 2);
-  rect(COLORS.snow, x + Math.round(s / 2) - bw - 1, y + Math.round((s - bh) / 2), bw, bh);
-  rect(COLORS.snow, x + Math.round(s / 2) + 1, y + Math.round((s - bh) / 2), bw, bh);
-  if (state.mode === 'playing') state.buttons.push({ x, y, w: s, h: s, onTap: () => setMode('paused') });
-  drawMuteButton(x - s - 4, y, state.mode === 'playing');
+  if (!isCoop()) {
+    ctx.globalAlpha = 0.7;
+    rect(COLORS.night, x, y, s, s);
+    ctx.globalAlpha = 1;
+    const bw = Math.max(2, Math.round(s / 6)), bh = Math.round(s / 2);
+    rect(COLORS.snow, x + Math.round(s / 2) - bw - 1, y + Math.round((s - bh) / 2), bw, bh);
+    rect(COLORS.snow, x + Math.round(s / 2) + 1, y + Math.round((s - bh) / 2), bw, bh);
+    if (state.mode === 'playing') state.buttons.push({ x, y, w: s, h: s, onTap: () => setMode('paused') });
+  }
+  drawMuteButton(isCoop() ? x : x - s - 4, y, state.mode === 'playing');
 }
 
 function drawMuteButton(x, y, tappable) {
@@ -1175,8 +1461,69 @@ function drawTitle() {
   drawTextShadow('SNOWBALL', CONFIG.W / 2, 60, 4, COLORS.coatBlue, 'center');
   drawTextShadow('BEST: ' + state.best, CONFIG.W / 2, 92, 2, COLORS.gold, 'center');
   button('TAP TO PLAY', CONFIG.W / 2, 140, 140, 1.5, startGame);   // menu sits over the trees like a foreground
+  const playH = Math.ceil(btnH() * 1.5);
+  button('CO-OP', CONFIG.W / 2, 140 + Math.ceil(playH / 2) + Math.ceil(btnH() / 2) + 8, 140, 1, openCoopMenu, COLORS.ice);
   if (installEvent) button('INSTALL', 3 + 32, 3 + Math.ceil(btnH() / 2), 64, 1, promptInstall, COLORS.ice);   // top left
   drawMuteButton(CONFIG.W - 3 - btnH(), 3, true);
+}
+
+// ---- Co-op screens ----
+function keyBtn(label, x, y, w, h, onTap) {
+  state.buttons.push({ x, y, w, h, onTap });
+  rect(COLORS.night, x - 1, y - 1, w + 2, h + 2);
+  rect(COLORS.ice, x, y, w, h);
+  rect(COLORS.shadow, x, y + h - 2, w, 2);
+  drawText(label, x + w / 2, y + Math.round((h - 10) / 2), 2, COLORS.night, 'center');
+}
+
+function drawCoopMenu() {
+  const cx = CONFIG.W / 2, h = Math.ceil(btnH() * 1.3);
+  drawTextShadow('CO-OP', cx, 40, 4, COLORS.coatBlue, 'center');
+  drawTextShadow('TWO PLAYERS - ONE FORT', cx, 72, 1, COLORS.snow, 'center');
+  button('CREATE GAME', cx, 120, 140, 1.3, () => { setMode('coophost'); hostGame(); });
+  button('JOIN GAME', cx, 120 + h + 10, 140, 1.3, () => { state.entry = ''; net.status = 'idle'; net.error = ''; setMode('coopjoin'); });
+  button('BACK', cx, 120 + 2 * (h + 10), 100, 1, () => setMode('title'), COLORS.ice);
+}
+
+function drawCoopHost() {
+  const cx = CONFIG.W / 2;
+  drawTextShadow('YOUR CODE', cx, 40, 2, COLORS.coatBlue, 'center');
+  if (net.status === 'error') {
+    drawTextShadow(net.error, cx, 90, 2, COLORS.red, 'center');
+    drawText('CHECK YOUR INTERNET AND TRY AGAIN', cx, 112, 1, COLORS.night, 'center');
+  } else {
+    drawTextShadow(net.code, cx, 66, 6, COLORS.gold, 'center');
+    drawText('YOUR FRIEND TAPS JOIN GAME', cx, 112, 1, COLORS.night, 'center');
+    drawText('AND TYPES THIS CODE', cx, 122, 1, COLORS.night, 'center');
+    const dots = '.'.repeat(1 + Math.floor(performance.now() / 400) % 3);
+    drawTextShadow((net.status === 'opening' ? 'OPENING' : 'WAITING FOR PLAYER') + dots, cx, 146, 1, COLORS.snow, 'center');
+  }
+  button('CANCEL', cx, 200, 100, 1, backToCoopMenu, COLORS.ice);
+}
+
+function drawCoopJoin() {
+  const cx = CONFIG.W / 2, kh = btnH();
+  drawTextShadow('JOIN GAME', cx, 14, 3, COLORS.coatBlue, 'center');
+  const shown = [0, 1, 2, 3].map(i => state.entry[i] || '_').join(' ');
+  drawTextShadow(shown, cx, 44, 4, COLORS.gold, 'center');
+  const msg = net.status === 'connecting' ? 'CONNECTING...' : net.status === 'connected' ? 'CONNECTED! WAITING FOR HOST...'
+    : net.status === 'error' ? net.error : 'TYPE THE CODE FROM YOUR FRIEND';
+  drawText(msg, cx, 72, 1, net.status === 'error' ? COLORS.red : COLORS.night, 'center');
+  const L = CONFIG.codeLetters;
+  [L.slice(0, 7), L.slice(7, 14), L.slice(14)].forEach((row, ri) => {
+    const x0 = Math.round((CONFIG.W - (row.length * 24 - 2)) / 2), y = 88 + ri * (kh + 4);
+    [...row].forEach((ch, i) => keyBtn(ch, x0 + i * 24, y, 22, kh, () => addLetter(ch)));
+  });
+  const by = 88 + 3 * (kh + 4) + Math.ceil(kh / 2) + 4;
+  button('DEL', 52, by, 70, 1, delLetter, COLORS.ice);
+  button('BACK', 128, by, 70, 1, backToCoopMenu, COLORS.ice);
+}
+
+function drawLost() {
+  dim();
+  drawTextShadow('CONNECTION LOST', CONFIG.W / 2, 100, 2, COLORS.snow, 'center');
+  drawTextShadow('THE OTHER PLAYER LEFT', CONFIG.W / 2, 124, 1, COLORS.snow, 'center');
+  button('MENU', CONFIG.W / 2, 170, 110, 1, leaveCoop);
 }
 
 function drawPaused() {
@@ -1193,7 +1540,9 @@ function drawGameOver() {
   drawTextShadow('SCORE: ' + state.score, CONFIG.W / 2, 92, 2, COLORS.snow, 'center');
   drawTextShadow('BEST: ' + state.best, CONFIG.W / 2, 112, 2, COLORS.snow, 'center');
   if (state.newBest) drawTextShadow('NEW BEST!', CONFIG.W / 2, 136, 2, COLORS.gold, 'center');
-  button('PLAY AGAIN', CONFIG.W / 2, 190, 130, 1.3, startGame);
+  if (net.role === 'guest') drawTextShadow('WAITING FOR HOST...', CONFIG.W / 2, 184, 1, COLORS.snow, 'center');
+  else button('PLAY AGAIN', CONFIG.W / 2, 190, 130, 1.3, startGame);
+  if (isCoop()) button('MENU', CONFIG.W / 2, 190 + Math.ceil(btnH() * 1.3) + 10, 100, 1, leaveCoop, COLORS.ice);
 }
 
 // Top-down cast shadow: the fort and kid silhouettes, offset away from the light (upper left)
@@ -1201,10 +1550,12 @@ function drawShadow() {
   const ox = CONFIG.shadowOffX, oy = CONFIG.shadowOffY;
   ctx.globalAlpha = CONFIG.shadowAlpha;
   ctx.drawImage(fortShadow, ox, oy);
-  const x = 86 + ox, y = 275 + oy;                 // kid is drawn at (86, 275), 8x15
-  rect(COLORS.night, x + 1, y, 6, 7);              // hat and head
-  rect(COLORS.night, x, y + 7, 8, 6);              // scarf and coat
-  rect(COLORS.night, x + 2, y + 13, 4, 2);         // legs
+  for (const sl of slots()) {
+    const k = kidPos(sl), x = k.x + ox, y = k.y + oy;
+    rect(COLORS.night, x + 1, y, 6, 7);            // hat and head
+    rect(COLORS.night, x, y + 7, 8, 6);            // scarf and coat
+    rect(COLORS.night, x + 2, y + 13, 4, 2);       // legs
+  }
   ctx.globalAlpha = 1;
 }
 
@@ -1239,13 +1590,16 @@ function draw() {
   drawTreesAndBullies();
   drawPower();
   drawFort();
-  drawKid();
-  drawArm();
-  drawCooldownRing();
-  drawAimLine();
+  for (const sl of slots()) drawKid(sl);
+  for (const sl of slots()) drawArm(sl);
+  for (const sl of slots()) drawCooldownRing(sl);
+  for (const sl of slots()) drawAimLine(sl);
   for (const s of state.snowballs) drawSnowball(s);
   drawParticles();
   if (state.mode === 'title') drawTitle();
+  else if (state.mode === 'coopmenu') drawCoopMenu();
+  else if (state.mode === 'coophost') drawCoopHost();
+  else if (state.mode === 'coopjoin') drawCoopJoin();
   else {
     drawHud();
     drawBanner();
@@ -1253,6 +1607,7 @@ function draw() {
     if (state.mode === 'paused') drawPaused();
     else if (state.mode === 'gameover') drawGameOver();
   }
+  if (isCoop() && net.lost && (state.mode === 'playing' || state.mode === 'gameover')) drawLost();
   if (updateReady && state.mode !== 'playing') drawUpdateBanner();
 }
 
@@ -1261,8 +1616,10 @@ let last = performance.now();
 function frame(now) {
   const dt = Math.min(CONFIG.maxDt, (now - last) / 1000);
   last = now;
-  if (state.mode === 'playing') update(dt);
-  else if (state.mode !== 'paused') updateFlakes(dt);   // snow keeps falling on title / game over
+  if (net.role === 'guest' && (state.mode === 'playing' || state.mode === 'gameover')) updateGuest(dt);   // the host runs the world
+  else if (state.mode === 'playing') update(dt);
+  else if (state.mode !== 'paused') updateFlakes(dt);   // snow keeps falling on menus / game over
+  if (isCoop()) netTick(dt);
   ctx.imageSmoothingEnabled = false;
   draw();
   requestAnimationFrame(frame);
