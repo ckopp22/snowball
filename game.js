@@ -28,6 +28,27 @@ const CONFIG = {
   fortCY: 284,            // its flat (open) side sits at this y
   fortOuter: 18,          // outer radius (bullies stop when they touch it)
   fortInner: 10,          // inner radius (wall is 8 px thick)
+  shadowOffX: 3,          // top-down cast shadow of the fort and kid: offset from the object (light from upper left)
+  shadowOffY: 3,
+  shadowAlpha: 0.28,
+  // Trees: wave N shows N-1 of them (none in wave 1), in this order, up to treeMax
+  treePositions: [[88, 120], [30, 205], [135, 200], [10, 150], [150, 140]],   // top-left of each 8x15 sprite
+  treeMax: 5,
+  treeRadius: 5,          // snowballs stop in this circle, centred 4 px right and 9 px down from the sprite's top-left
+  treeBaseRadius: 4,      // bullies collide with the trunk base instead (centred 4 px right, treeBaseY down),
+  treeBaseY: 13,          // so they can walk up behind the foliage and then have to go around
+  treeLookahead: 36,      // px ahead that bullies look for a tree to walk around
+  // Power-ups: a floating snowflake; a snowball that hits it grants a random effect
+  powerFirstDelay: 10,    // s of play before the first one
+  powerMinGap: 14,        // s between one disappearing and the next appearing (random in this range)
+  powerMaxGap: 26,
+  powerLife: 8,           // s it floats before vanishing
+  powerRadius: 7,         // hit circle
+  powerMinY: 45,          // it appears in this band, below the HUD and above the fort
+  powerMaxY: 185,
+  gunTime: 5,             // s of machine-gun snowballs
+  gunInterval: 0.12,      // s between machine-gun shots
+  treeReturnTime: 6,      // s between each removed tree growing back
   flakes: 30,
   flakeSpeedMin: 12,
   flakeSpeedMax: 26,
@@ -204,6 +225,8 @@ const SFX = {
   fort:  () => { noise('lowpass', 1400, 250, 0.22, 0.9); tone('sawtooth', 100, 45, 0.15, 0.4); },
   wave:  () => { tone('sine', 660, 660, 0.2, 0.4); tone('sine', 880, 880, 0.3, 0.4, 0.1); },
   over:  () => { tone('square', 330, 300, 0.2, 0.3); tone('square', 247, 120, 0.45, 0.3, 0.22); },
+  tree:  () => { noise('lowpass', 800, 300, 0.08, 0.3); tone('sine', 140, 80, 0.08, 0.35); },
+  power: () => { tone('sine', 880, 880, 0.1, 0.3); tone('sine', 1175, 1175, 0.1, 0.3, 0.07); tone('sine', 1568, 1568, 0.22, 0.3, 0.14); },
   click: () => tone('square', 1000, 900, 0.03, 0.2),
 };
 function sfx(name) {
@@ -255,41 +278,38 @@ bg.width = CONFIG.W; bg.height = CONFIG.H;
 (function buildBackground() {
   const b = bg.getContext('2d');
   const r = (c, x, y, w, h) => { b.fillStyle = c; b.fillRect(x, y, w, h); };
-  // Sky / snowy ground in soft bands
-  r(COLORS.ice, 0, 0, 180, 320);
-  r('#d6ecff', 0, 120, 180, 200);
-  r(COLORS.snow, 0, 200, 180, 120);
-  // Snow sparkle / drift specks
-  for (let i = 0; i < 70; i++) {
-    r(COLORS.snow, Math.floor(rnd() * 178), Math.floor(rnd() * 200), 2, 1);
+  // One snowy ground across the whole screen, with light ice-blue drift specks for texture
+  r(COLORS.snow, 0, 0, 180, 320);
+  for (let i = 0; i < 120; i++) {
+    r(COLORS.ice, Math.floor(rnd() * 177), Math.floor(rnd() * 319), 2 + Math.floor(rnd() * 2), 1);
   }
-  for (let i = 0; i < 40; i++) {
-    r(COLORS.ice, Math.floor(rnd() * 178), 205 + Math.floor(rnd() * 60), 3, 1);
-  }
-  // Pine trees (small pixel trees)
-  const tree = (x, y) => {
-    r(COLORS.brown, x + 3, y + 12, 2, 3);
-    r(COLORS.hatGreen, x + 3, y, 2, 2);
-    r(COLORS.hatGreen, x + 2, y + 2, 4, 3);
-    r(COLORS.hatGreen, x + 1, y + 5, 6, 3);
-    r(COLORS.hatGreen, x, y + 8, 8, 4);
-    r(COLORS.snow, x + 3, y + 1, 2, 1);
-    r(COLORS.snow, x + 2, y + 5, 2, 1);
-    r(COLORS.snow, x + 1, y + 8, 2, 1);
-    r(COLORS.shadow, x - 1, y + 15, 10, 1);
-  };
-  tree(10, 150); tree(150, 140); tree(30, 205); tree(135, 200); tree(88, 120);
 })();
+
+// ---------- Trees (drawn per wave, see activeTrees) ----------
+function paintTree(g) {
+  const r = (c, x, y, w, h) => { g.fillStyle = c; g.fillRect(x, y, w, h); };
+  r(COLORS.brown, 3, 12, 2, 3);
+  r(COLORS.hatGreen, 3, 0, 2, 2);
+  r(COLORS.hatGreen, 2, 2, 4, 3);
+  r(COLORS.hatGreen, 1, 5, 6, 3);
+  r(COLORS.hatGreen, 0, 8, 8, 4);
+  r(COLORS.snow, 3, 1, 2, 1); r(COLORS.snow, 2, 5, 2, 1); r(COLORS.snow, 1, 8, 2, 1);
+}
+const treeImg = document.createElement('canvas');
+treeImg.width = 8;
+treeImg.height = 15;
+paintTree(treeImg.getContext('2d'));
 
 // ---------- Fort ----------
 // A half-circle ring of two rows of snow blocks, pre-rendered once, with the floor inside it.
 // fortMask is the same wall in red, drawn over the fort for the hit flash.
 const fort = document.createElement('canvas');
 const fortMask = document.createElement('canvas');
-fort.width = fortMask.width = CONFIG.W;
-fort.height = fortMask.height = CONFIG.H;
+const fortShadow = document.createElement('canvas');   // wall silhouette in night blue, drawn offset as the cast shadow
+fort.width = fortMask.width = fortShadow.width = CONFIG.W;
+fort.height = fortMask.height = fortShadow.height = CONFIG.H;
 (function buildFort() {
-  const f = fort.getContext('2d'), m = fortMask.getContext('2d');
+  const f = fort.getContext('2d'), m = fortMask.getContext('2d'), sh = fortShadow.getContext('2d');
   const cx = CONFIG.fortCX, cy = CONFIG.fortCY, ri = CONFIG.fortInner;
   const rm = (CONFIG.fortOuter + ri) / 2;
   // Soft cloud-like wall: overlapping round puffs of snow along the arc (varied sizes make it lumpy)
@@ -299,6 +319,7 @@ fort.height = fortMask.height = CONFIG.H;
     return { x: cx + Math.cos(a) * rm, y: cy - Math.sin(a) * rm, r };
   });
   m.fillStyle = COLORS.red;
+  sh.fillStyle = COLORS.night;
   for (let y = 0; y < cy + 4; y++) {
     for (let x = 0; x < CONFIG.W; x++) {
       const px = x + 0.5, py = y + 0.5;
@@ -313,6 +334,7 @@ fort.height = fortMask.height = CONFIG.H;
         : s > 0.5 ? COLORS.shadow : s > 0.15 ? COLORS.ice : COLORS.snow;
       f.fillRect(x, y, 1, 1);
       m.fillRect(x, y, 1, 1);
+      sh.fillRect(x, y, 1, 1);
     }
   }
 })();
@@ -335,6 +357,13 @@ const state = {
   breakTimer: 0,
   banner: 0,
   time: 0,             // seconds of play, for walk animation
+  power: null,         // the floating snowflake: { x, baseY, y, age }
+  powerTimer: CONFIG.powerFirstDelay,
+  gun: 0,              // machine-gun seconds left
+  gunTimer: 0,
+  treesRemoved: 0,     // trees currently removed by the power-up (they return one by one)
+  treeReturnTimer: 0,
+  popup: null,         // { text, t } message after a pickup
   flakes: [],
   snowballs: [],
   cooldown: 0,
@@ -382,14 +411,14 @@ function endAim() {
   state.pointerId = null;
 }
 
-function throwSnowball() {
+function throwSnowball(auto) {          // auto = machine-gun shot: no cooldown
   const a = state.aimAngle * DEG;
   const dirX = Math.cos(a), dirY = -Math.sin(a);
   state.snowballs.push({
     x: CONFIG.handX, y: CONFIG.handY,
     vx: dirX * CONFIG.snowballSpeed, vy: dirY * CONFIG.snowballSpeed,
   });
-  state.cooldown = CONFIG.throwCooldown;
+  if (!auto) state.cooldown = CONFIG.throwCooldown;
   state.swing = CONFIG.armSwingTime;
   sfx('throw');
 }
@@ -422,7 +451,7 @@ window.addEventListener('pointerup', e => {
   e.preventDefault();
   updateAim(toCanvas(e));
   // Throw only if pull is long enough and the cooldown is over
-  if (state.aimValid && state.cooldown <= 0) throwSnowball();
+  if (state.aimValid && state.cooldown <= 0 && state.gun <= 0) throwSnowball();   // machine gun fires by itself
   endAim();
 }, { passive: false });
 
@@ -455,9 +484,16 @@ function update(dt) {
     const px = s.x, py = s.y;
     s.x += s.vx * dt;
     s.y += s.vy * dt;
-    const target = firstBullyHit(px, py, s.x, s.y);
-    if (target) {                       // one snowball, one bully
-      hitBully(target);
+    const bh = firstBullyHit(px, py, s.x, s.y), th = firstTreeHit(px, py, s.x, s.y), ph = firstPowerHit(px, py, s.x, s.y);
+    if (ph !== null && (!bh || ph < bh.t) && (!th || ph < th.t)) {   // snowball pops the snowflake
+      collectPower();
+      state.snowballs.splice(i, 1);
+    } else if (bh && (!th || bh.t <= th.t)) {  // one snowball, one bully
+      hitBully(bh.b);
+      state.snowballs.splice(i, 1);
+    } else if (th) {                    // trees stop snowballs
+      puff(th.x, th.y);
+      sfx('tree');
       state.snowballs.splice(i, 1);
     } else if (s.x < -m || s.x > CONFIG.W + m || s.y < -m || s.y > CONFIG.H + m) {
       state.snowballs.splice(i, 1);     // miss: just leaves the screen
@@ -467,6 +503,7 @@ function update(dt) {
   updateBullies(dt);
   updateParticles(dt);
   updateWaves(dt);
+  updatePower(dt);
 }
 
 // ---------- Game logic ----------
@@ -480,6 +517,7 @@ function resetGame() {
     snowballs: [], bullies: [], particles: [], cooldown: 0, swing: 0,
     score: 0, newBest: false, health: CONFIG.fortHealth, flash: 0,
     wave: 0, toSpawn: 0, spawnTimer: 0, waveEnded: false, breakTimer: 0, banner: 0, time: 0,
+    power: null, powerTimer: CONFIG.powerFirstDelay, gun: 0, gunTimer: 0, treesRemoved: 0, treeReturnTimer: 0, popup: null,
   });
   endAim();
 }
@@ -574,7 +612,119 @@ function firstBullyHit(ax, ay, bx, by) {
     const R = sr + CONFIG.bullyTypes[b.type].radius;
     if (cx * cx + cy * cy <= R * R && t < hitT) { hit = b; hitT = t; }
   }
+  return hit ? { b: hit, t: hitT } : null;
+}
+
+// ---- Power-ups ----
+const rand = (a, b) => a + Math.random() * (b - a);
+
+// Segment-vs-circle; returns t (0..1 along the snowball's path this frame) or null
+function firstPowerHit(ax, ay, bx, by) {
+  const pw = state.power;
+  if (!pw) return null;
+  const R = CONFIG.snowballRadius + CONFIG.powerRadius;
+  const dx = bx - ax, dy = by - ay, len2 = dx * dx + dy * dy;
+  let t = len2 ? ((pw.x - ax) * dx + (pw.y - ay) * dy) / len2 : 0;
+  t = Math.max(0, Math.min(1, t));
+  return (ax + dx * t - pw.x) ** 2 + (ay + dy * t - pw.y) ** 2 <= R * R ? t : null;
+}
+
+function collectPower() {
+  const pw = state.power;
+  state.power = null;
+  state.powerTimer = rand(CONFIG.powerMinGap, CONFIG.powerMaxGap);
+  puff(pw.x, pw.y);
+  sfx('power');
+  const opts = ['gun'];                                         // only offer effects that do something
+  if (state.health < CONFIG.fortHealth) opts.push('heal');
+  if (activeTrees().length) opts.push('trees');
+  const pick = opts[Math.floor(Math.random() * opts.length)];
+  if (pick === 'gun') {
+    state.gun = CONFIG.gunTime;
+    state.gunTimer = 0;
+    state.popup = { text: 'MACHINE GUN!', t: 1.4 };
+  } else if (pick === 'heal') {
+    state.health = CONFIG.fortHealth;
+    puff(CONFIG.fortCX, CONFIG.fortCY - 12);
+    state.popup = { text: 'FORT REPAIRED!', t: 1.4 };
+  } else {
+    for (const p of activeTrees()) puff(p[0] + 4, p[1] + 9);
+    state.treesRemoved = Math.min(CONFIG.treeMax, state.wave - 1);
+    state.treeReturnTimer = CONFIG.treeReturnTime;
+    state.popup = { text: 'TREES GONE!', t: 1.4 };
+  }
+}
+
+function updatePower(dt) {
+  // Floating snowflake: appears at a random spot, bobs, vanishes if not popped
+  if (state.power) {
+    state.power.age += dt;
+    state.power.y = state.power.baseY + Math.sin(state.power.age * 2.5) * 3;
+    if (state.power.age >= CONFIG.powerLife) {
+      state.power = null;
+      state.powerTimer = rand(CONFIG.powerMinGap, CONFIG.powerMaxGap);
+    }
+  } else {
+    state.powerTimer -= dt;
+    if (state.powerTimer <= 0) {
+      const y = rand(CONFIG.powerMinY, CONFIG.powerMaxY);
+      state.power = { x: rand(18, CONFIG.W - 18), baseY: y, y, age: 0 };
+    }
+  }
+  // Machine gun: fires along the current aim direction by itself
+  if (state.gun > 0) {
+    state.gun = Math.max(0, state.gun - dt);
+    state.gunTimer -= dt;
+    if (state.gunTimer <= 0) { throwSnowball(true); state.gunTimer = CONFIG.gunInterval; }
+  }
+  // Removed trees grow back one by one, in the order they were added
+  if (state.treesRemoved > 0) {
+    state.treeReturnTimer -= dt;
+    if (state.treeReturnTimer <= 0) {
+      state.treesRemoved--;
+      state.treeReturnTimer = CONFIG.treeReturnTime;
+      const shown = activeTrees();
+      if (shown.length) { const p = shown[shown.length - 1]; puff(p[0] + 4, p[1] + 9); }
+    }
+  }
+  if (state.popup && (state.popup.t -= dt) <= 0) state.popup = null;
+}
+
+// Wave N shows N-1 trees (none in wave 1), up to treeMax; the power-up can hide them for a while
+function activeTrees() {
+  if (state.mode === 'title') return CONFIG.treePositions.slice(0, CONFIG.treeMax);   // main menu shows them all
+  return CONFIG.treePositions.slice(0, Math.max(0, Math.min(CONFIG.treeMax, state.wave - 1) - state.treesRemoved));
+}
+
+function firstTreeHit(ax, ay, bx, by) {
+  const R = CONFIG.snowballRadius + CONFIG.treeRadius;
+  const dx = bx - ax, dy = by - ay, len2 = dx * dx + dy * dy;
+  let hit = null, hitT = Infinity;
+  for (const p of activeTrees()) {
+    const tx = p[0] + 4, ty = p[1] + 9;
+    let t = len2 ? ((tx - ax) * dx + (ty - ay) * dy) / len2 : 0;
+    t = Math.max(0, Math.min(1, t));
+    const qx = ax + dx * t, qy = ay + dy * t;
+    if ((qx - tx) ** 2 + (qy - ty) ** 2 <= R * R && t < hitT) { hit = { x: qx, y: qy, t }; hitT = t; }
+  }
   return hit;
+}
+
+// Bend the wanted heading away from any tree just ahead so bullies walk around it
+function avoidTrees(b, T, want) {
+  const dx = Math.cos(want), dy = Math.sin(want);
+  const need = CONFIG.treeBaseRadius + T.radius + 3;
+  let turn = 0;
+  for (const p of activeTrees()) {
+    const rx = p[0] + 4 - b.x, ry = p[1] + CONFIG.treeBaseY - b.y;          // tree relative to the bully
+    const along = rx * dx + ry * dy;
+    if (along <= 0 || along > CONFIG.treeLookahead) continue;
+    const side = rx * dy - ry * dx;                          // >0: tree is on the left of the heading (screen coords)
+    if (Math.abs(side) >= need) continue;
+    const dir = side > 0 ? 1 : side < 0 ? -1 : (b.ph < 5 ? 1 : -1);
+    turn += dir * (0.6 + 0.9 * (1 - Math.abs(side) / need));
+  }
+  return want + Math.max(-1.4, Math.min(1.4, turn));
 }
 
 function hitBully(b) {
@@ -589,11 +739,15 @@ function hitBully(b) {
     state.score += T.points;
     sfx('hit');
   }
+  puff(b.x, b.y);
+}
+
+function puff(x, y) {
   for (let i = 0; i < CONFIG.puffCount; i++) {
     const a = Math.random() * Math.PI * 2;
     const sp = CONFIG.puffSpeed * (0.5 + Math.random() * 0.5);
     state.particles.push({
-      x: b.x, y: b.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 10,
+      x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 10,
       life: CONFIG.puffLife, c: Math.random() < 0.5 ? COLORS.snow : COLORS.ice,
     });
   }
@@ -606,7 +760,8 @@ function updateBullies(dt) {
     if (b.state === 'walking') {
       b.age += dt;
       // Walk straight down; below turnY, steer smoothly toward the kid (fort centre)
-      const want = b.y >= CONFIG.turnY ? Math.atan2(CONFIG.fortCY - b.y, CONFIG.fortCX - b.x0) : Math.PI / 2;
+      let want = b.y >= CONFIG.turnY ? Math.atan2(CONFIG.fortCY - b.y, CONFIG.fortCX - b.x0) : Math.PI / 2;
+      want = avoidTrees(b, T, want);              // walk around trees
       const da = Math.atan2(Math.sin(want - b.ang), Math.cos(want - b.ang));   // wrapped to -PI..PI
       const maxTurn = CONFIG.turnRate * dt;
       b.ang += Math.max(-maxTurn, Math.min(maxTurn, da));
@@ -618,6 +773,14 @@ function updateBullies(dt) {
         sway = Math.sin(b.age * T.swayFreq * Math.PI * 2 + b.ph) * T.swayAmp * k;
       }
       b.x = b.x0 + sway;
+      for (const p of activeTrees()) {            // hard collision: never overlap a tree
+        const tx = p[0] + 4, ty = p[1] + CONFIG.treeBaseY, R = CONFIG.treeBaseRadius + T.radius;
+        const ddx = b.x - tx, ddy = b.y - ty, d = Math.hypot(ddx, ddy);
+        if (d < R) {
+          const nx = d > 0.01 ? ddx / d : 1, ny = d > 0.01 ? ddy / d : 0, push = R - d;
+          b.x0 += nx * push; b.x += nx * push; b.y += ny * push;
+        }
+      }
       if (b.y >= CONFIG.H || Math.hypot(b.x - CONFIG.fortCX, b.y - CONFIG.fortCY) <= CONFIG.fortOuter + T.radius) {  // touches the fort
         state.bullies.splice(i, 1);
         damageFort(T.fortDamage);
@@ -663,7 +826,7 @@ document.addEventListener('visibilitychange', () => {
 
 // ---------- Draw ----------
 function drawFlakes() {
-  ctx.fillStyle = COLORS.snow;
+  ctx.fillStyle = COLORS.ice;   // ice blue so flakes show against the white snow
   for (const f of state.flakes) {
     ctx.fillRect(Math.round(f.x + Math.sin(f.ph) * 3), Math.round(f.y), 1, 1);
   }
@@ -896,6 +1059,7 @@ function drawHud() {
   drawText('WAVE ' + state.wave, CONFIG.W / 2, 3, 1, COLORS.snow, 'center');
   drawText('BEST ' + Math.max(state.best, state.score), CONFIG.W - 3, 3, 1, COLORS.snow, 'right');
   for (let i = 0; i < CONFIG.fortHealth; i++) drawFlake(3 + i * 6, 14, i < state.health);
+  if (state.gun > 0) drawTextShadow('GUN ' + Math.ceil(state.gun), 3, 24, 1, COLORS.coatBlue);
 
   // Pause button (square, at least 44 px on screen); only tappable while playing
   const s = btnH(), x = CONFIG.W - 3 - s, y = 13;
@@ -928,6 +1092,35 @@ function drawMuteButton(x, y, tappable) {
   if (tappable) state.buttons.push({ x, y, w: s, h: s, onTap: toggleMute });
 }
 
+// Floating sparkly snowflake (7x7) with a soft shadow and twinkling gold sparkles; blinks when about to vanish
+function drawPower() {
+  const pw = state.power;
+  if (!pw) return;
+  if (CONFIG.powerLife - pw.age < 2 && Math.floor(pw.age * 8) % 2) return;
+  const x = Math.round(pw.x) - 3, y = Math.round(pw.y) - 3;
+  const flake = (ox, oy, arm, core) => {
+    rect(arm, x + ox + 3, y + oy, 1, 7); rect(arm, x + ox, y + oy + 3, 7, 1);
+    for (const [dx, dy] of [[1, 1], [5, 1], [1, 5], [5, 5]]) rect(arm, x + ox + dx, y + oy + dy, 1, 1);
+    rect(core, x + ox + 2, y + oy + 2, 3, 3);
+  };
+  ctx.globalAlpha = 0.3;
+  flake(2, 3, COLORS.night, COLORS.night);                       // shadow (cast down-right like the others)
+  ctx.globalAlpha = 1;
+  flake(0, 0, COLORS.shadow, COLORS.snow);
+  rect(COLORS.coatBlue, x + 3, y + 3, 1, 1);
+  const tw = Math.floor(pw.age * 6) % 4;                         // sparkles take turns
+  const sp = [[-3, -2], [9, 1], [-2, 8], [8, 9]][tw];
+  rect(COLORS.gold, x + sp[0], y + sp[1] + 1, 3, 1);
+  rect(COLORS.gold, x + sp[0] + 1, y + sp[1], 1, 3);
+}
+
+function drawPopup() {
+  if (!state.popup || state.mode !== 'playing') return;
+  ctx.globalAlpha = Math.min(1, state.popup.t / 0.4);
+  drawTextShadow(state.popup.text, CONFIG.W / 2, 130, 2, COLORS.coatBlue, 'center');
+  ctx.globalAlpha = 1;
+}
+
 function drawBanner() {
   if (state.mode !== 'playing' || state.banner <= 0) return;
   ctx.globalAlpha = Math.min(1, state.banner / 0.4);   // fade out over the last 0.4 s
@@ -946,13 +1139,10 @@ function promptInstall() {
 }
 
 function drawTitle() {
-  drawTextShadow('SNOWBALL', CONFIG.W / 2, 40, 4, COLORS.snow, 'center');
-  drawTextShadow('BEST: ' + state.best, CONFIG.W / 2, 78, 2, COLORS.gold, 'center');
-  button('TAP TO PLAY', CONFIG.W / 2, 130, 140, 1.5, startGame);
-  if (installEvent) {
-    const playH = Math.ceil(btnH() * 1.5);
-    button('INSTALL', CONFIG.W / 2, 130 + playH / 2 + btnH() / 2 + 12, 90, 1, promptInstall, COLORS.ice);
-  }
+  drawTextShadow('SNOWBALL', CONFIG.W / 2, 60, 4, COLORS.coatBlue, 'center');
+  drawTextShadow('BEST: ' + state.best, CONFIG.W / 2, 92, 2, COLORS.gold, 'center');
+  button('TAP TO PLAY', CONFIG.W / 2, 140, 140, 1.5, startGame);   // menu sits over the trees like a foreground
+  if (installEvent) button('INSTALL', 3 + 32, 3 + Math.ceil(btnH() / 2), 64, 1, promptInstall, COLORS.ice);   // top left
   drawMuteButton(CONFIG.W - 3 - btnH(), 3, true);
 }
 
@@ -973,12 +1163,38 @@ function drawGameOver() {
   button('PLAY AGAIN', CONFIG.W / 2, 190, 130, 1.3, startGame);
 }
 
+// Top-down cast shadow: the fort and kid silhouettes, offset away from the light (upper left)
+function drawShadow() {
+  const ox = CONFIG.shadowOffX, oy = CONFIG.shadowOffY;
+  ctx.globalAlpha = CONFIG.shadowAlpha;
+  ctx.drawImage(fortShadow, ox, oy);
+  const x = 86 + ox, y = 275 + oy;                 // kid is drawn at (86, 275), 8x15
+  rect(COLORS.night, x + 1, y, 6, 7);              // hat and head
+  rect(COLORS.night, x, y + 7, 8, 6);              // scarf and coat
+  rect(COLORS.night, x + 2, y + 13, 4, 2);         // legs
+  ctx.globalAlpha = 1;
+}
+
+// Trees and bullies drawn back to front by their feet, so a bully above a tree is hidden behind its foliage
+function drawTreesAndBullies() {
+  const items = [];
+  for (const p of activeTrees()) items.push({ y: p[1] + 15, draw: () => ctx.drawImage(treeImg, p[0], p[1]) });
+  for (const b of state.bullies) {
+    const lying = b.state !== 'walking';
+    items.push({ y: lying ? b.y - 100 : b.y + CONFIG.bullyTypes[b.type].halfH, draw: () => drawBully(b) });  // fallen bullies lie under everything
+  }
+  items.sort((a, b) => a.y - b.y);
+  for (const it of items) it.draw();
+}
+
 function draw() {
   state.buttons = [];
   ctx.clearRect(0, 0, CONFIG.W, CONFIG.H);
   ctx.drawImage(bg, 0, 0);
   drawFlakes();
-  for (const b of state.bullies) drawBully(b);
+  drawShadow();
+  drawTreesAndBullies();
+  drawPower();
   drawFort();
   drawKid();
   drawArm();
@@ -989,6 +1205,7 @@ function draw() {
   if (state.mode === 'title') { drawTitle(); return; }
   drawHud();
   drawBanner();
+  drawPopup();
   if (state.mode === 'paused') drawPaused();
   else if (state.mode === 'gameover') drawGameOver();
 }
