@@ -325,11 +325,12 @@ function drawGlyph5(ch, x, y, s, color) {
   for (let i = 0; i < 35; i++) if (g[i] === '1') ctx.fillRect(x + (i % 5) * s, y + Math.floor(i / 5) * s, s, s);
 }
 
-// Menu text in the 5x7 font (7 px tall at scale 1, 14 at scale 2). Optional outline keeps it readable over trees and snow.
-function text5Width(str, s) { return str.length * (5 * s + Math.max(1, Math.round(s * 0.6))) - Math.max(1, Math.round(s * 0.6)); }
-function drawText5(str, x, y, s, color, align, outline) {
+// Menu text in the 5x7 font (7 px tall at scale 1, 14 at scale 2). Letters get breathing room: gap defaults to 1 / 3 / 4 px at
+// scale 1 / 2 / 3. An optional outline keeps it readable over trees and snow.
+const text5Gap = s => (s >= 3 ? 4 : s === 2 ? 3 : 1);
+function drawText5(str, x, y, s, color, align, outline, gap) {
   str = String(str).toUpperCase();
-  const adv = 5 * s + Math.max(1, Math.round(s * 0.6)), w = text5Width(str, s);
+  const g = gap === undefined ? text5Gap(s) : gap, adv = 5 * s + g, w = str.length * adv - g;
   const x0 = Math.round(align === 'center' ? x - w / 2 : align === 'right' ? x - w : x);
   const draw = (ox, oy, c) => { for (let i = 0; i < str.length; i++) drawGlyph5(str[i], x0 + ox + i * adv, y + oy, s, c); };
   if (outline) for (const [ox, oy] of [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]]) draw(ox, oy, outline);
@@ -1516,17 +1517,17 @@ function promptInstall() {
 let updateReady = false;
 window.addEventListener('snowball-update', () => { updateReady = true; });
 function drawUpdateBanner() {
-  button('TAP TO UPDATE', CONFIG.W / 2, view.h - view.safeBottom - 4 - Math.ceil(btnH() / 2), 150, 1, () => location.reload(), COLORS.hatGreen);
+  button('TAP TO UPDATE', CONFIG.W / 2, view.h - view.safeBottom - 4 - Math.ceil(btnH() / 2), 176, 1, () => location.reload(), COLORS.hatGreen);
 }
 
 function drawTitle() {
   drawText5('SNOWBALL', CONFIG.W / 2, 50, 3, COLORS.coatBlue, 'center', COLORS.night);
   drawText5('BEST: ' + state.best, CONFIG.W / 2, 84, 2, COLORS.night, 'center', COLORS.snow);
-  drawText5('CO-OP BEST: ' + state.coopBest, CONFIG.W / 2, 102, 2, COLORS.night, 'center', COLORS.snow);
-  button('TAP TO PLAY', CONFIG.W / 2, 140, 140, 1.5, startGame);   // menu sits over the trees like a foreground
+  drawText5('CO-OP BEST: ' + state.coopBest, CONFIG.W / 2, 102, 2, COLORS.night, 'center', COLORS.snow, 1);   // tighter gap: it is long
+  button('TAP TO PLAY', CONFIG.W / 2, 140, 164, 1.5, startGame);   // menu sits over the trees like a foreground
   const playH = Math.ceil(btnH() * 1.5);
   button('CO-OP', CONFIG.W / 2, 140 + Math.ceil(playH / 2) + Math.ceil(btnH() / 2) + 8, 140, 1, openCoopMenu, COLORS.ice);
-  if (installEvent) button('INSTALL', 3 + 42, 3 + Math.ceil(btnH() / 2), 84, 1, promptInstall, COLORS.ice);   // top left
+  if (installEvent) button('INSTALL', 3 + 50, 3 + Math.ceil(btnH() / 2), 100, 1, promptInstall, COLORS.ice);   // top left
   drawMuteButton(CONFIG.W - 3 - btnH(), 3, true);
 }
 
@@ -1543,7 +1544,7 @@ function drawCoopMenu() {
   const cx = CONFIG.W / 2, h = Math.ceil(btnH() * 1.3);
   drawText5('CO-OP', cx, 36, 3, COLORS.coatBlue, 'center', COLORS.night);
   drawText5('TWO PLAYERS - ONE FORT', cx, 68, 1, COLORS.night, 'center', COLORS.snow);
-  button('CREATE GAME', cx, 120, 140, 1.3, () => { setMode('coophost'); hostGame(); });
+  button('CREATE GAME', cx, 120, 160, 1.3, () => { setMode('coophost'); hostGame(); });
   button('JOIN GAME', cx, 120 + h + 10, 140, 1.3, () => { state.entry = ''; net.status = 'idle'; net.error = ''; setMode('coopjoin'); });
   button('BACK', cx, 120 + 2 * (h + 10), 100, 1, () => setMode('title'), COLORS.ice);
 }
@@ -1604,7 +1605,7 @@ function drawGameOver() {
   drawTextShadow('BEST: ' + bestNow(), CONFIG.W / 2, 112, 2, COLORS.snow, 'center');
   if (state.newBest) drawTextShadow('NEW BEST!', CONFIG.W / 2, 136, 2, COLORS.gold, 'center');
   if (net.role === 'guest') drawTextShadow('WAITING FOR HOST...', CONFIG.W / 2, 184, 1, COLORS.snow, 'center');
-  else button('PLAY AGAIN', CONFIG.W / 2, 190, 130, 1.3, startGame);
+  else button('PLAY AGAIN', CONFIG.W / 2, 190, 150, 1.3, startGame);
   if (isCoop()) button('MENU', CONFIG.W / 2, 190 + Math.ceil(btnH() * 1.3) + 10, 100, 1, leaveCoop, COLORS.ice);
 }
 
