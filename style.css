@@ -5,7 +5,7 @@ html, body {
   height: 100%;
   overflow: hidden;
   position: fixed;
-  background: #1c2b4a; /* night blue letterbox */
+  background: #f4f8ff; /* snow white: matches the ground, so any margin looks like more snow (no blue bars) */
   overscroll-behavior: none;
   touch-action: none;
   -webkit-user-select: none;
@@ -29,7 +29,7 @@ canvas {
   position: absolute;
   left: 0;
   top: 0;
-  /* width/height/position are set in game.js to fit 180:320 inside the window */
+  /* width/height/position are set in game.js: full width, as tall as the screen */
   image-rendering: pixelated;
   image-rendering: crisp-edges;
   touch-action: none;

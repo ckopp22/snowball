@@ -5,6 +5,7 @@ const CONFIG = {
   W: 180,
   H: 320,
   maxDt: 0.05,            // delta-time clamp (s)
+  maxExtra: 160,          // on tall phones the canvas grows up to this many px taller than H (more snow below the fort)
   throwCooldown: 0.5,     // s
   snowballSpeed: 220,     // px/s
   snowballRadius: 3,
@@ -111,6 +112,7 @@ const CONFIG = {
   btnMinPx: 44,           // minimum on-screen button height in CSS px
   btnMinInternal: 24,     // minimum button height in internal px
   storageKey: 'snowball_highscore',
+  coopStorageKey: 'snowball_coop_highscore',   // co-op has its own best score
   mutedKey: 'snowball_muted',
   sfxVolume: 0.3,         // master volume (0-1); sounds are short and quiet on purpose
 };
@@ -128,21 +130,27 @@ const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 ctx.imageSmoothingEnabled = false;
 
-const view = { scale: 1 }; // CSS px per internal px, used to keep buttons >= 44 px
+// scale = CSS px per internal px (keeps buttons >= 44 px); h = internal canvas height (>= H, taller on tall phones);
+// safeTop / safeBottom = notch and home-bar insets in internal px; ty = y offset of whatever is being drawn (for tap tests)
+const view = { scale: 1, h: CONFIG.H, safeTop: 0, safeBottom: 0, ty: 0 };
 function fitCanvas() {
   const vw = window.innerWidth, vh = window.innerHeight;
-  // Fit inside the safe area so the HUD is never under the notch or home bar
   const cs = getComputedStyle(document.getElementById('safe'));
   const sl = parseFloat(cs.paddingLeft) || 0, sr = parseFloat(cs.paddingRight) || 0;
   const st = parseFloat(cs.paddingTop) || 0, sb = parseFloat(cs.paddingBottom) || 0;
-  const aw = vw - sl - sr, ah = vh - st - sb;
-  const s = Math.min(aw / CONFIG.W, ah / CONFIG.H);
+  // Full screen: fit the width, then make the canvas as tall as the screen so there are no bars at the top or bottom.
+  // The extra height is just more snow below the fort; the HUD and menus are pushed in by the safe-area insets.
+  const aw = vw - sl - sr;
+  const s = Math.min(aw / CONFIG.W, vh / CONFIG.H);
   view.scale = s;
-  const w = CONFIG.W * s, h = CONFIG.H * s;
+  const h = Math.min(CONFIG.H + CONFIG.maxExtra, Math.max(CONFIG.H, Math.ceil(vh / s)));
+  if (canvas.height !== h) { canvas.height = h; ctx.imageSmoothingEnabled = false; }   // resizing resets the context
+  view.h = h; view.safeTop = st / s; view.safeBottom = sb / s;
+  const w = CONFIG.W * s;
   canvas.style.width = w + 'px';
-  canvas.style.height = h + 'px';
+  canvas.style.height = h * s + 'px';
   canvas.style.left = sl + (aw - w) / 2 + 'px';
-  canvas.style.top = st + (ah - h) / 2 + 'px';
+  canvas.style.top = '0px';
 }
 window.addEventListener('resize', fitCanvas);
 window.addEventListener('orientationchange', fitCanvas);
@@ -171,11 +179,11 @@ function pixLine(x0, y0, x1, y1, c) {
 }
 
 // Storage (try/catch: private mode or blocked storage must not break the game)
-function loadBest() {
-  try { return parseInt(localStorage.getItem(CONFIG.storageKey), 10) || 0; } catch (e) { return 0; }
+function loadBest(key) {
+  try { return parseInt(localStorage.getItem(key || CONFIG.storageKey), 10) || 0; } catch (e) { return 0; }
 }
-function saveBest(v) {
-  try { localStorage.setItem(CONFIG.storageKey, String(v)); } catch (e) { /* ignore */ }
+function saveBest(v, key) {
+  try { localStorage.setItem(key || CONFIG.storageKey, String(v)); } catch (e) { /* ignore */ }
 }
 
 // ---------- Players / co-op state ----------
@@ -333,14 +341,14 @@ function drawTextShadow(str, x, y, s, color, align) {
 
 // ---------- Static background (pre-rendered once) ----------
 const bg = document.createElement('canvas');
-bg.width = CONFIG.W; bg.height = CONFIG.H;
+bg.width = CONFIG.W; bg.height = CONFIG.H + CONFIG.maxExtra;   // tall enough for any phone
 (function buildBackground() {
   const b = bg.getContext('2d');
   const r = (c, x, y, w, h) => { b.fillStyle = c; b.fillRect(x, y, w, h); };
   // One snowy ground across the whole screen, with light ice-blue drift specks for texture
-  r(COLORS.snow, 0, 0, 180, 320);
+  r(COLORS.snow, 0, 0, 180, bg.height);
   for (let i = 0; i < 120; i++) {
-    r(COLORS.ice, Math.floor(rnd() * 177), Math.floor(rnd() * 319), 2 + Math.floor(rnd() * 2), 1);
+    r(COLORS.ice, Math.floor(rnd() * 177), Math.floor(rnd() * (bg.height - 1)), 2 + Math.floor(rnd() * 2), 1);
   }
 })();
 
@@ -407,6 +415,7 @@ const state = {
   buttons: [],         // rebuilt every frame by the draw code, used for tap tests
   score: 0,
   best: loadBest(),
+  coopBest: loadBest(CONFIG.coopStorageKey),
   newBest: false,
   health: CONFIG.fortHealth,
   flash: 0,            // fort hit-flash timer
@@ -451,7 +460,7 @@ function toCanvas(e) {
   const r = canvas.getBoundingClientRect();
   return {
     x: (e.clientX - r.left) * (CONFIG.W / r.width),
-    y: (e.clientY - r.top) * (CONFIG.H / r.height),
+    y: (e.clientY - r.top) * (view.h / r.height),
   };
 }
 
@@ -546,7 +555,7 @@ function updateFlakes(dt) {
   for (const f of state.flakes) {
     f.y += f.v * dt;
     f.ph += dt;
-    if (f.y > CONFIG.H) { f.y = -2; f.x = Math.random() * CONFIG.W; }
+    if (f.y > view.h) { f.y = -2; f.x = Math.random() * CONFIG.W; }
   }
 }
 
@@ -931,10 +940,17 @@ function damageFort(n) {
   if (state.health <= 0) gameOver();
 }
 
+// Solo and co-op keep separate best scores
+const bestNow = () => (isCoop() ? state.coopBest : state.best);
+function recordBest(score) {
+  const co = isCoop(), k = co ? 'coopBest' : 'best';
+  state.newBest = score > state[k];
+  if (state[k] < score) { state[k] = score; saveBest(score, co ? CONFIG.coopStorageKey : CONFIG.storageKey); }
+}
+
 function gameOver() {
   endAim();
-  state.newBest = state.score > state.best;
-  if (state.newBest) { state.best = state.score; saveBest(state.best); }
+  recordBest(state.score);
   state.mode = 'gameover';
   sfx('over');
 }
@@ -1071,8 +1087,7 @@ function applySnapshot(d) {
   if (d.m === 'playing' && prev !== 'playing') { resetGame(); }        // first snapshot, or the host pressed Play Again
   if (d.m === 'gameover' && prev === 'playing') {
     endAim();
-    state.newBest = d.sc > state.best;
-    if (state.newBest) { state.best = d.sc; saveBest(state.best); }
+    recordBest(d.sc);
   }
   state.mode = d.m;
   state.score = d.sc; state.wave = d.w; state.health = d.h; state.flash = d.fl; state.banner = d.bn;
@@ -1352,12 +1367,22 @@ function drawParticles() {
 }
 
 // ---- UI ----
+// Draw a screen pushed down by the top safe-area inset (notch / status bar); taps are offset to match
+function withInset(fn) {
+  ctx.save();
+  ctx.translate(0, view.safeTop);
+  view.ty = view.safeTop;
+  fn();
+  view.ty = 0;
+  ctx.restore();
+}
+
 const btnH = () => Math.max(CONFIG.btnMinInternal, Math.ceil(CONFIG.btnMinPx / view.scale));
 
 function button(label, cx, cy, w, hMul, onTap, color) {
   const h = Math.ceil(btnH() * hMul);
   const x = Math.round(cx - w / 2), y = Math.round(cy - h / 2);
-  state.buttons.push({ x, y, w, h, onTap });
+  state.buttons.push({ x, y: y + view.ty, w, h, onTap });
   rect(COLORS.night, x - 1, y - 1, w + 2, h + 2);
   rect(color || COLORS.gold, x, y, w, h);
   rect(color ? COLORS.shadow : '#e6b92e', x, y + h - 2, w, 2);
@@ -1367,7 +1392,7 @@ function button(label, cx, cy, w, hMul, onTap, color) {
 
 function dim() {
   ctx.globalAlpha = 0.65;
-  rect(COLORS.night, 0, 0, CONFIG.W, CONFIG.H);
+  rect(COLORS.night, 0, 0, CONFIG.W, view.h);
   ctx.globalAlpha = 1;
 }
 
@@ -1384,12 +1409,12 @@ function drawFlake(x, y, on) {
 
 function drawHud() {
   ctx.globalAlpha = 0.7;
-  rect(COLORS.night, 0, 0, CONFIG.W, 11);
+  rect(COLORS.night, 0, -view.safeTop, CONFIG.W, 11 + view.safeTop);   // the strip also covers the status-bar area
   rect(COLORS.night, 1, 12, CONFIG.fortHealth * 6 + 2, 9);
   ctx.globalAlpha = 1;
   drawText('SCORE ' + state.score, 3, 3, 1, COLORS.snow);
   drawText('WAVE ' + state.wave, CONFIG.W / 2, 3, 1, COLORS.snow, 'center');
-  drawText('BEST ' + Math.max(state.best, state.score), CONFIG.W - 3, 3, 1, COLORS.snow, 'right');
+  drawText('BEST ' + Math.max(bestNow(), state.score), CONFIG.W - 3, 3, 1, COLORS.snow, 'right');
   for (let i = 0; i < CONFIG.fortHealth; i++) drawFlake(3 + i * 6, 14, i < state.health);
   if (state.gun > 0) drawTextShadow('GUN ' + Math.ceil(state.gun), 3, 24, 1, COLORS.coatBlue);
 
@@ -1402,7 +1427,7 @@ function drawHud() {
     const bw = Math.max(2, Math.round(s / 6)), bh = Math.round(s / 2);
     rect(COLORS.snow, x + Math.round(s / 2) - bw - 1, y + Math.round((s - bh) / 2), bw, bh);
     rect(COLORS.snow, x + Math.round(s / 2) + 1, y + Math.round((s - bh) / 2), bw, bh);
-    if (state.mode === 'playing') state.buttons.push({ x, y, w: s, h: s, onTap: () => setMode('paused') });
+    if (state.mode === 'playing') state.buttons.push({ x, y: y + view.ty, w: s, h: s, onTap: () => setMode('paused') });
   }
   drawMuteButton(isCoop() ? x : x - s - 4, y, state.mode === 'playing');
 }
@@ -1423,7 +1448,7 @@ function drawMuteButton(x, y, tappable) {
     rect(COLORS.snow, cx + 2, cy - 1, 1, 3);              // sound waves
     rect(COLORS.snow, cx + 4, cy - 3, 1, 7);
   }
-  if (tappable) state.buttons.push({ x, y, w: s, h: s, onTap: toggleMute });
+  if (tappable) state.buttons.push({ x, y: y + view.ty, w: s, h: s, onTap: toggleMute });
 }
 
 // Floating sparkly snowflake (7x7) with a soft shadow and twinkling gold sparkles; blinks when about to vanish
@@ -1477,12 +1502,13 @@ function promptInstall() {
 let updateReady = false;
 window.addEventListener('snowball-update', () => { updateReady = true; });
 function drawUpdateBanner() {
-  button('TAP TO UPDATE', CONFIG.W / 2, CONFIG.H - 4 - Math.ceil(btnH() / 2), 150, 1, () => location.reload(), COLORS.hatGreen);
+  button('TAP TO UPDATE', CONFIG.W / 2, view.h - view.safeBottom - 4 - Math.ceil(btnH() / 2), 150, 1, () => location.reload(), COLORS.hatGreen);
 }
 
 function drawTitle() {
   drawTextShadow('SNOWBALL', CONFIG.W / 2, 60, 4, COLORS.coatBlue, 'center');
-  drawTextShadow('BEST: ' + state.best, CONFIG.W / 2, 92, 2, COLORS.gold, 'center');
+  drawTextShadow('BEST: ' + state.best, CONFIG.W / 2, 86, 2, COLORS.gold, 'center');
+  drawTextShadow('CO-OP BEST: ' + state.coopBest, CONFIG.W / 2, 101, 2, COLORS.gold, 'center');
   button('TAP TO PLAY', CONFIG.W / 2, 140, 140, 1.5, startGame);   // menu sits over the trees like a foreground
   const playH = Math.ceil(btnH() * 1.5);
   button('CO-OP', CONFIG.W / 2, 140 + Math.ceil(playH / 2) + Math.ceil(btnH() / 2) + 8, 140, 1, openCoopMenu, COLORS.ice);
@@ -1492,7 +1518,7 @@ function drawTitle() {
 
 // ---- Co-op screens ----
 function keyBtn(label, x, y, w, h, onTap) {
-  state.buttons.push({ x, y, w, h, onTap });
+  state.buttons.push({ x, y: y + view.ty, w, h, onTap });
   rect(COLORS.night, x - 1, y - 1, w + 2, h + 2);
   rect(COLORS.ice, x, y, w, h);
   rect(COLORS.shadow, x, y + h - 2, w, 2);
@@ -1560,7 +1586,7 @@ function drawGameOver() {
   dim();
   drawTextShadow('GAME OVER', CONFIG.W / 2, 50, 3, COLORS.snow, 'center');
   drawTextShadow('SCORE: ' + state.score, CONFIG.W / 2, 92, 2, COLORS.snow, 'center');
-  drawTextShadow('BEST: ' + state.best, CONFIG.W / 2, 112, 2, COLORS.snow, 'center');
+  drawTextShadow('BEST: ' + bestNow(), CONFIG.W / 2, 112, 2, COLORS.snow, 'center');
   if (state.newBest) drawTextShadow('NEW BEST!', CONFIG.W / 2, 136, 2, COLORS.gold, 'center');
   if (net.role === 'guest') drawTextShadow('WAITING FOR HOST...', CONFIG.W / 2, 184, 1, COLORS.snow, 'center');
   else button('PLAY AGAIN', CONFIG.W / 2, 190, 130, 1.3, startGame);
@@ -1604,7 +1630,7 @@ function drawTreesAndBullies() {
 
 function draw() {
   state.buttons = [];
-  ctx.clearRect(0, 0, CONFIG.W, CONFIG.H);
+  ctx.clearRect(0, 0, CONFIG.W, view.h);
   ctx.drawImage(bg, 0, 0);
   drawFlakes();
   drawShadow();
@@ -1618,12 +1644,12 @@ function draw() {
   for (const sl of slots()) drawAimLine(sl);
   for (const s of state.snowballs) drawSnowball(s);
   drawParticles();
-  if (state.mode === 'title') drawTitle();
-  else if (state.mode === 'coopmenu') drawCoopMenu();
-  else if (state.mode === 'coophost') drawCoopHost();
-  else if (state.mode === 'coopjoin') drawCoopJoin();
+  if (state.mode === 'title') withInset(drawTitle);
+  else if (state.mode === 'coopmenu') withInset(drawCoopMenu);
+  else if (state.mode === 'coophost') withInset(drawCoopHost);
+  else if (state.mode === 'coopjoin') withInset(drawCoopJoin);
   else {
-    drawHud();
+    withInset(drawHud);
     drawBanner();
     drawPopup();
     if (state.mode === 'paused') drawPaused();
