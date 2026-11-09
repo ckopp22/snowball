@@ -55,7 +55,7 @@ const CONFIG = {
   treeReturnTime: 6,      // s between each removed tree growing back
   // Co-op (WebRTC through PeerJS: the host runs the game, the guest sends aim/throws and draws snapshots)
   netPrefix: 'snowball-coop-',                // peer id = prefix + the 4-letter code
-  codeLetters: 'BCDFGHJKLMNPQRSTVWXZ',        // consonants only, so codes never spell a word
+  codeLetters: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ',  // the full alphabet, for both generating and typing codes
   codeLength: 4,
   netInterval: 0.05,      // s between host snapshots (20 per second)
   netTimeout: 6,          // s without any message before the link counts as lost
@@ -302,6 +302,29 @@ function drawText(str, x, y, s, color, align) {
 }
 
 // Text with a night-blue drop shadow so it reads on any background
+// Bigger, clearer 5x7 letters for the co-op code and the join keyboard (the 3x5 font is too cramped to read at a glance)
+const FONT5 = {};
+'A 01110,10001,10001,11111,10001,10001,10001|B 11110,10001,10001,11110,10001,10001,11110|C 01110,10001,10000,10000,10000,10001,01110|D 11110,10001,10001,10001,10001,10001,11110|E 11111,10000,10000,11110,10000,10000,11111|F 11111,10000,10000,11110,10000,10000,10000|G 01110,10001,10000,10111,10001,10001,01111|H 10001,10001,10001,11111,10001,10001,10001|I 01110,00100,00100,00100,00100,00100,01110|J 00111,00010,00010,00010,00010,10010,01100|K 10001,10010,10100,11000,10100,10010,10001|L 10000,10000,10000,10000,10000,10000,11111|M 10001,11011,10101,10101,10001,10001,10001|N 10001,11001,10101,10011,10001,10001,10001|O 01110,10001,10001,10001,10001,10001,01110|P 11110,10001,10001,11110,10000,10000,10000|Q 01110,10001,10001,10001,10101,10010,01101|R 11110,10001,10001,11110,10100,10010,10001|S 01111,10000,10000,01110,00001,00001,11110|T 11111,00100,00100,00100,00100,00100,00100|U 10001,10001,10001,10001,10001,10001,01110|V 10001,10001,10001,10001,10001,01010,00100|W 10001,10001,10001,10101,10101,11011,10001|X 10001,10001,01010,00100,01010,10001,10001|Y 10001,10001,01010,00100,00100,00100,00100|Z 11111,00001,00010,00100,01000,10000,11111'
+  .split('|').forEach(g => { FONT5[g[0]] = g.slice(2).split(',').join(''); });
+
+function drawGlyph5(ch, x, y, s, color) {
+  const g = FONT5[ch];
+  if (!g) return;
+  ctx.fillStyle = color;
+  for (let i = 0; i < 35; i++) if (g[i] === '1') ctx.fillRect(x + (i % 5) * s, y + Math.floor(i / 5) * s, s, s);
+}
+
+// A row of code slots: dark plates with big gold letters (a dash for the empty ones)
+function drawCode(str, cx, y, s, len) {
+  const w = 5 * s + 6, h = 7 * s + 6, gap = 4, x0 = Math.round(cx - (len * w + (len - 1) * gap) / 2);
+  for (let i = 0; i < len; i++) {
+    const x = x0 + i * (w + gap);
+    rect(COLORS.night, x, y, w, h);
+    if (str[i]) drawGlyph5(str[i], x + 3, y + 3, s, COLORS.gold);
+    else rect(COLORS.shadow, x + 3, y + h - 3 - s, 5 * s, s);
+  }
+}
+
 function drawTextShadow(str, x, y, s, color, align) {
   const o = Math.ceil(s / 2);
   drawText(str, x + o, y + o, s, COLORS.night, align);
@@ -1473,7 +1496,7 @@ function keyBtn(label, x, y, w, h, onTap) {
   rect(COLORS.night, x - 1, y - 1, w + 2, h + 2);
   rect(COLORS.ice, x, y, w, h);
   rect(COLORS.shadow, x, y + h - 2, w, 2);
-  drawText(label, x + w / 2, y + Math.round((h - 10) / 2), 2, COLORS.night, 'center');
+  drawGlyph5(label, x + Math.round((w - 10) / 2), y + Math.round((h - 14) / 2), 2, COLORS.night);
 }
 
 function drawCoopMenu() {
@@ -1492,7 +1515,7 @@ function drawCoopHost() {
     drawTextShadow(net.error, cx, 90, 2, COLORS.red, 'center');
     drawText('CHECK YOUR INTERNET AND TRY AGAIN', cx, 112, 1, COLORS.night, 'center');
   } else {
-    drawTextShadow(net.code, cx, 66, 6, COLORS.gold, 'center');
+    drawCode(net.code, cx, 58, 3, CONFIG.codeLength);
     drawText('YOUR FRIEND TAPS JOIN GAME', cx, 112, 1, COLORS.night, 'center');
     drawText('AND TYPES THIS CODE', cx, 122, 1, COLORS.night, 'center');
     const dots = '.'.repeat(1 + Math.floor(performance.now() / 400) % 3);
@@ -1504,17 +1527,16 @@ function drawCoopHost() {
 function drawCoopJoin() {
   const cx = CONFIG.W / 2, kh = btnH();
   drawTextShadow('JOIN GAME', cx, 14, 3, COLORS.coatBlue, 'center');
-  const shown = [0, 1, 2, 3].map(i => state.entry[i] || '_').join(' ');
-  drawTextShadow(shown, cx, 44, 4, COLORS.gold, 'center');
+  drawCode(state.entry, cx, 34, 2, CONFIG.codeLength);
   const msg = net.status === 'connecting' ? 'CONNECTING...' : net.status === 'connected' ? 'CONNECTED! WAITING FOR HOST...'
     : net.status === 'error' ? net.error : 'TYPE THE CODE FROM YOUR FRIEND';
-  drawText(msg, cx, 72, 1, net.status === 'error' ? COLORS.red : COLORS.night, 'center');
+  drawText(msg, cx, 62, 1, net.status === 'error' ? COLORS.red : COLORS.night, 'center');
   const L = CONFIG.codeLetters;
-  [L.slice(0, 7), L.slice(7, 14), L.slice(14)].forEach((row, ri) => {
-    const x0 = Math.round((CONFIG.W - (row.length * 24 - 2)) / 2), y = 88 + ri * (kh + 4);
-    [...row].forEach((ch, i) => keyBtn(ch, x0 + i * 24, y, 22, kh, () => addLetter(ch)));
+  [L.slice(0, 9), L.slice(9, 18), L.slice(18)].forEach((row, ri) => {        // 9 + 9 + 8 keys, A-Z
+    const x0 = Math.round((CONFIG.W - (row.length * 19 - 2)) / 2), y = 78 + ri * (kh + 4);
+    [...row].forEach((ch, i) => keyBtn(ch, x0 + i * 19, y, 17, kh, () => addLetter(ch)));
   });
-  const by = 88 + 3 * (kh + 4) + Math.ceil(kh / 2) + 4;
+  const by = 78 + 3 * (kh + 4) + Math.ceil(kh / 2) + 4;
   button('DEL', 52, by, 70, 1, delLetter, COLORS.ice);
   button('BACK', 128, by, 70, 1, backToCoopMenu, COLORS.ice);
 }

@@ -26,7 +26,7 @@ To test on a phone, open `http://<your-computer-ip>:8000` on the same Wi-Fi. Add
 On the title screen tap **CO-OP**. One player taps **CREATE GAME** and reads out the 4-letter code; the other taps **JOIN GAME** and types it. Both play as boys behind the same fort. The host's device runs the game and the guest's device sends its aim and throws.
 
 - Connections are peer-to-peer (WebRTC) using [PeerJS](https://peerjs.com) 1.5.4 (MIT), vendored as `peerjs.min.js`. Pairing goes through PeerJS's free public signaling server, so both devices need internet access to connect (game data then flows directly between them).
-- Codes use consonants only, so they never spell a word.
+- Codes are 4 letters, A to Z.
 - Co-op can't be paused. If the other player leaves, a "Connection lost" screen returns you to the menu.
 
 ## Icons
