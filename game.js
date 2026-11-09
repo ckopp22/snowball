@@ -27,6 +27,50 @@ const CONFIG = {
   flakes: 30,
   flakeSpeedMin: 12,
   flakeSpeedMax: 26,
+
+  // Bullies
+  bullyMargin: 8,         // keep spawn columns this far from the side edges
+  regularSpeed: 14,       // px/s at wave 1; every type's speed is a multiple of this
+  hitFlashTime: 0.12,     // s white flash when a Big Kid survives a hit
+  bullyTypes: {
+    // speedMul: x Regular speed | hp: hits to drop | radius: hit circle | halfH: half sprite height
+    // (fort reached when y + halfH >= fortTop) | from: first wave | weight/weightPer/weightMax: spawn odds
+    // (maxes stay below Regular's weight so Regular is always the most common type)
+    regular: { speedMul: 1,   hp: 1, points: 10, fortDamage: 1, radius: 6, halfH: 7, from: 1, weight: 10, weightPer: 0,   weightMax: 10 },
+    runner:  { speedMul: 2,   hp: 1, points: 20, fortDamage: 1, radius: 5, halfH: 6, from: 3, weight: 3,  weightPer: 0.5, weightMax: 7 },
+    big:     { speedMul: 0.6, hp: 2, points: 30, fortDamage: 2, radius: 8, halfH: 8, from: 5, weight: 2,  weightPer: 0.5, weightMax: 6 },
+    sled:    { speedMul: 1.8, hp: 1, points: 25, fortDamage: 1, radius: 7, halfH: 6, from: 8, weight: 2,  weightPer: 0.5, weightMax: 5,
+               swayAmp: 16, swayFreq: 0.35 }, // px and Hz of the side-to-side drift
+  },
+  fallTime: 0.4,          // s flat on its back
+  fadeTime: 0.3,          // s fade-out after the fall
+  // Waves
+  waveBase: 5,            // bullies in wave N = waveBase + wavePerN * N (max waveMax)
+  wavePerN: 2,
+  waveMax: 40,
+  speedGrowth: 0.04,      // compounding per wave
+  speedCap: 2.5,          // max multiple of the starting speed
+  gapStart: 1.2,          // s between spawns at wave 1
+  gapMin: 0.35,           // s between spawns, the floor
+  gapDecay: 0.9,          // gap = gapMin + (gapStart - gapMin) * gapDecay^(wave-1)
+  firstSpawnDelay: 1.0,   // s after a wave starts before the first bully
+  waveBreak: 3,           // s after the wave is cleared
+  waveBonus: 50,
+  bannerTime: 1.6,        // s the "Wave N" banner shows
+  // Fort
+  fortHealth: 10,
+  fortFlashTime: 0.25,
+  // Hit puff
+  puffCount: 8,
+  puffLife: 0.4,
+  puffSpeed: 40,
+  puffGravity: 60,
+  // UI
+  btnMinPx: 44,           // minimum on-screen button height in CSS px
+  btnMinInternal: 24,     // minimum button height in internal px
+  storageKey: 'snowball_highscore',
+  mutedKey: 'snowball_muted',
+  sfxVolume: 0.3,         // master volume (0-1); sounds are short and quiet on purpose
 };
 
 const COLORS = {
@@ -34,6 +78,7 @@ const COLORS = {
   coatBlue: '#3b6fd9', skin: '#f2c9a0', brown: '#8a5a33', black: '#111',
   gold: '#ffd23f', hatGreen: '#3fa34d',
   orange: '#f28c28', // scarf (simplest addition to the palette)
+  red: '#d93b3b',
 };
 
 // ---------- Canvas setup ----------
@@ -41,14 +86,21 @@ const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 ctx.imageSmoothingEnabled = false;
 
+const view = { scale: 1 }; // CSS px per internal px, used to keep buttons >= 44 px
 function fitCanvas() {
   const vw = window.innerWidth, vh = window.innerHeight;
-  const s = Math.min(vw / CONFIG.W, vh / CONFIG.H);
+  // Fit inside the safe area so the HUD is never under the notch or home bar
+  const cs = getComputedStyle(document.getElementById('safe'));
+  const sl = parseFloat(cs.paddingLeft) || 0, sr = parseFloat(cs.paddingRight) || 0;
+  const st = parseFloat(cs.paddingTop) || 0, sb = parseFloat(cs.paddingBottom) || 0;
+  const aw = vw - sl - sr, ah = vh - st - sb;
+  const s = Math.min(aw / CONFIG.W, ah / CONFIG.H);
+  view.scale = s;
   const w = CONFIG.W * s, h = CONFIG.H * s;
   canvas.style.width = w + 'px';
   canvas.style.height = h + 'px';
-  canvas.style.left = (vw - w) / 2 + 'px';
-  canvas.style.top = (vh - h) / 2 + 'px';
+  canvas.style.left = sl + (aw - w) / 2 + 'px';
+  canvas.style.top = st + (ah - h) / 2 + 'px';
 }
 window.addEventListener('resize', fitCanvas);
 window.addEventListener('orientationchange', fitCanvas);
@@ -67,6 +119,128 @@ const DEG = Math.PI / 180;
 // Tiny seeded RNG so the static background is the same every load
 let seed = 7;
 const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+
+function pixLine(x0, y0, x1, y1, c) {
+  const n = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0));
+  for (let i = 0; i <= n; i++) {
+    const t = n ? i / n : 0;
+    rect(c, x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, 1, 1);
+  }
+}
+
+// Storage (try/catch: private mode or blocked storage must not break the game)
+function loadBest() {
+  try { return parseInt(localStorage.getItem(CONFIG.storageKey), 10) || 0; } catch (e) { return 0; }
+}
+function saveBest(v) {
+  try { localStorage.setItem(CONFIG.storageKey, String(v)); } catch (e) { /* ignore */ }
+}
+
+// ---------- Audio (Web Audio, no files; context is created on the first tap) ----------
+const audio = { ctx: null, master: null, noise: null, muted: false };
+try { audio.muted = localStorage.getItem(CONFIG.mutedKey) === '1'; } catch (e) { /* ignore */ }
+function saveMuted() {
+  try { localStorage.setItem(CONFIG.mutedKey, audio.muted ? '1' : '0'); } catch (e) { /* ignore */ }
+}
+function toggleMute() { audio.muted = !audio.muted; saveMuted(); }
+
+function initAudio() {
+  try {
+    if (!audio.ctx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      const c = new AC();
+      audio.master = c.createGain();
+      audio.master.gain.value = CONFIG.sfxVolume;
+      audio.master.connect(c.destination);
+      const buf = c.createBuffer(1, c.sampleRate, c.sampleRate);   // 1 s of white noise
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+      audio.noise = buf;
+      audio.ctx = c;
+    }
+    if (audio.ctx.state === 'suspended') audio.ctx.resume();
+  } catch (e) { audio.ctx = null; }
+}
+
+function tone(type, f0, f1, dur, vol, delay) {
+  const c = audio.ctx, t = c.currentTime + (delay || 0);
+  const o = c.createOscillator(), g = c.createGain();
+  o.type = type;
+  o.frequency.setValueAtTime(f0, t);
+  o.frequency.exponentialRampToValueAtTime(Math.max(1, f1), t + dur);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(vol, t + 0.005);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(g); g.connect(audio.master);
+  o.start(t); o.stop(t + dur + 0.02);
+}
+
+function noise(filter, f0, f1, dur, vol, delay) {
+  const c = audio.ctx, t = c.currentTime + (delay || 0);
+  const s = c.createBufferSource(), f = c.createBiquadFilter(), g = c.createGain();
+  s.buffer = audio.noise;
+  f.type = filter;
+  f.frequency.setValueAtTime(f0, t);
+  f.frequency.exponentialRampToValueAtTime(Math.max(1, f1), t + dur);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(vol, t + 0.01);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  s.connect(f); f.connect(g); g.connect(audio.master);
+  s.start(t); s.stop(t + dur + 0.02);
+}
+
+const SFX = {
+  throw: () => noise('bandpass', 700, 2600, 0.14, 0.5),
+  hit:   () => { tone('sine', 180, 60, 0.12, 0.8); noise('lowpass', 900, 300, 0.06, 0.3); },
+  clank: () => { tone('square', 880, 840, 0.09, 0.25); tone('square', 1320, 1250, 0.09, 0.15); },
+  fort:  () => { noise('lowpass', 1400, 250, 0.22, 0.9); tone('sawtooth', 100, 45, 0.15, 0.4); },
+  wave:  () => { tone('sine', 660, 660, 0.2, 0.4); tone('sine', 880, 880, 0.3, 0.4, 0.1); },
+  over:  () => { tone('square', 330, 300, 0.2, 0.3); tone('square', 247, 120, 0.45, 0.3, 0.22); },
+  click: () => tone('square', 1000, 900, 0.03, 0.2),
+};
+function sfx(name) {
+  if (!audio.ctx || audio.muted) return;
+  try { SFX[name](); } catch (e) { /* ignore */ }
+}
+
+// 3x5 pixel font: 15 chars per glyph, row by row, '1' = pixel
+const FONT = {
+  A: '010101111101101', B: '110101110101110', C: '011100100100011', D: '110101101101110',
+  E: '111100110100111', F: '111100110100100', G: '011100101101011', H: '101101111101101',
+  I: '111010010010111', J: '001001001101010', K: '101101110101101', L: '100100100100111',
+  M: '101111111101101', N: '111101101101101', O: '010101101101010', P: '110101110100100',
+  Q: '010101101110011', R: '110101110101101', S: '011100010001110', T: '111010010010010',
+  U: '101101101101111', V: '101101101101010', W: '101101111111101', X: '101101010101101',
+  Y: '101101010010010', Z: '111001010100111',
+  0: '111101101101111', 1: '010110010010111', 2: '110001010100111', 3: '110001010001110',
+  4: '101101111001001', 5: '111100110001110', 6: '011100111101111', 7: '111001010010010',
+  8: '111101111101111', 9: '111101111001110',
+  ':': '000010000010000', '!': '010010010000010', '-': '000000111000000',
+};
+
+function drawText(str, x, y, s, color, align) {
+  str = String(str).toUpperCase();
+  const w = str.length * 4 * s - s;
+  let cx = Math.round(align === 'center' ? x - w / 2 : align === 'right' ? x - w : x);
+  ctx.fillStyle = color;
+  for (const ch of str) {
+    const g = FONT[ch];
+    if (g) {
+      for (let i = 0; i < 15; i++) {
+        if (g[i] === '1') ctx.fillRect(cx + (i % 3) * s, y + Math.floor(i / 3) * s, s, s);
+      }
+    }
+    cx += 4 * s;
+  }
+}
+
+// Text with a night-blue drop shadow so it reads on any background
+function drawTextShadow(str, x, y, s, color, align) {
+  const o = Math.ceil(s / 2);
+  drawText(str, x + o, y + o, s, COLORS.night, align);
+  drawText(str, x, y, s, color, align);
+}
 
 // ---------- Static background (pre-rendered once) ----------
 const bg = document.createElement('canvas');
@@ -124,6 +298,22 @@ fort.width = CONFIG.W; fort.height = CONFIG.H - CONFIG.fortTop;
 
 // ---------- State ----------
 const state = {
+  mode: 'title',       // title | playing | paused | gameover
+  bullies: [],
+  particles: [],
+  buttons: [],         // rebuilt every frame by the draw code, used for tap tests
+  score: 0,
+  best: loadBest(),
+  newBest: false,
+  health: CONFIG.fortHealth,
+  flash: 0,            // fort hit-flash timer
+  wave: 0,
+  toSpawn: 0,          // bullies still to spawn this wave
+  spawnTimer: 0,
+  waveEnded: false,
+  breakTimer: 0,
+  banner: 0,
+  time: 0,             // seconds of play, for walk animation
   flakes: [],
   snowballs: [],
   cooldown: 0,
@@ -180,11 +370,19 @@ function throwSnowball() {
   });
   state.cooldown = CONFIG.throwCooldown;
   state.swing = CONFIG.armSwingTime;
+  sfx('throw');
+}
+
+function hitButton(p) {
+  return state.buttons.find(b => p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h);
 }
 
 window.addEventListener('pointerdown', e => {
-  if (state.aiming) return;
   e.preventDefault();
+  initAudio();                       // browsers only allow audio after a user gesture
+  const b = hitButton(toCanvas(e));
+  if (b) { b.onTap(); sfx('click'); return; }
+  if (state.mode !== 'playing' || state.aiming) return;
   state.aiming = true;
   state.pointerId = e.pointerId;
   state.anchor = toCanvas(e);
@@ -213,28 +411,222 @@ window.addEventListener('pointercancel', e => {
 window.addEventListener('blur', endAim);
 
 // ---------- Update ----------
-function update(dt) {
-  // Falling snow
+function updateFlakes(dt) {
   for (const f of state.flakes) {
     f.y += f.v * dt;
     f.ph += dt;
     if (f.y > CONFIG.H) { f.y = -2; f.x = Math.random() * CONFIG.W; }
   }
+}
+
+function update(dt) {
+  updateFlakes(dt);
+  state.time += dt;
+  if (state.flash > 0) state.flash = Math.max(0, state.flash - dt);
 
   if (state.cooldown > 0) state.cooldown = Math.max(0, state.cooldown - dt);
   if (state.swing > 0) state.swing = Math.max(0, state.swing - dt);
 
-  // Snowballs fly straight until fully off-screen
+  // Snowballs fly straight until they hit a bully or leave the screen
   const m = CONFIG.snowballRadius + 1;
   for (let i = state.snowballs.length - 1; i >= 0; i--) {
     const s = state.snowballs[i];
+    const px = s.x, py = s.y;
     s.x += s.vx * dt;
     s.y += s.vy * dt;
-    if (s.x < -m || s.x > CONFIG.W + m || s.y < -m || s.y > CONFIG.H + m) {
+    const target = firstBullyHit(px, py, s.x, s.y);
+    if (target) {                       // one snowball, one bully
+      hitBully(target);
       state.snowballs.splice(i, 1);
+    } else if (s.x < -m || s.x > CONFIG.W + m || s.y < -m || s.y > CONFIG.H + m) {
+      state.snowballs.splice(i, 1);     // miss: just leaves the screen
+    }
+  }
+
+  updateBullies(dt);
+  updateParticles(dt);
+  updateWaves(dt);
+}
+
+// ---------- Game logic ----------
+const waveCount = n => Math.min(CONFIG.waveMax, CONFIG.waveBase + CONFIG.wavePerN * n);
+// Speed grows 4% per wave, compounding, capped at 2.5x
+const waveSpeed = n => CONFIG.regularSpeed * Math.min(CONFIG.speedCap, Math.pow(1 + CONFIG.speedGrowth, n - 1));
+const waveGap = n => CONFIG.gapMin + (CONFIG.gapStart - CONFIG.gapMin) * Math.pow(CONFIG.gapDecay, n - 1);
+
+function resetGame() {
+  Object.assign(state, {
+    snowballs: [], bullies: [], particles: [], cooldown: 0, swing: 0,
+    score: 0, newBest: false, health: CONFIG.fortHealth, flash: 0,
+    wave: 0, toSpawn: 0, spawnTimer: 0, waveEnded: false, breakTimer: 0, banner: 0, time: 0,
+  });
+  endAim();
+}
+
+function setMode(m) { endAim(); state.mode = m; }
+
+// DEBUG (easy to remove): open index.html?wave=8 to start at wave 8
+const DEBUG_START_WAVE = parseInt(new URLSearchParams(location.search).get('wave'), 10) || 1;
+
+function startGame() {
+  resetGame();
+  state.mode = 'playing';
+  startWave(DEBUG_START_WAVE);
+}
+
+function startWave(n) {
+  sfx('wave');
+  state.wave = n;
+  state.toSpawn = waveCount(n);
+  state.spawnTimer = CONFIG.firstSpawnDelay;
+  state.waveEnded = false;
+  state.banner = CONFIG.bannerTime;
+}
+
+// Weighted random type: newer types get likelier as waves rise, Regular stays the most common
+function pickType(wave) {
+  const ws = [];
+  let total = 0;
+  for (const k in CONFIG.bullyTypes) {
+    const T = CONFIG.bullyTypes[k];
+    const w = wave >= T.from ? Math.min(T.weightMax, T.weight + T.weightPer * (wave - T.from)) : 0;
+    ws.push([k, w]);
+    total += w;
+  }
+  let r = Math.random() * total;
+  for (const [k, w] of ws) { r -= w; if (r < 0) return k; }
+  return 'regular';
+}
+
+function spawnBully() {
+  const type = pickType(state.wave), T = CONFIG.bullyTypes[type];
+  const m = CONFIG.bullyMargin + (T.swayAmp || 0);   // leave room for the sled's sway
+  const x0 = m + Math.random() * (CONFIG.W - 2 * m);
+  state.bullies.push({
+    type,
+    x: x0, x0,                                       // x0 = centre column (sway is around it)
+    y: -T.halfH,
+    speed: waveSpeed(state.wave) * T.speedMul,
+    hp: T.hp,
+    state: 'walking',      // walking | falling | fading
+    t: 0,
+    age: 0,
+    flash: 0,
+    ph: Math.random() * 10, // walk-cycle / sway offset
+  });
+}
+
+function updateWaves(dt) {
+  if (state.mode !== 'playing') return;
+  if (state.banner > 0) state.banner -= dt;
+  if (state.toSpawn > 0) {
+    state.spawnTimer -= dt;
+    if (state.spawnTimer <= 0) {
+      spawnBully();
+      state.toSpawn--;
+      state.spawnTimer = waveGap(state.wave);
+    }
+  } else if (!state.waveEnded) {
+    // Wave is over once every bully is knocked down or has reached the fort
+    if (!state.bullies.some(b => b.state === 'walking')) {
+      state.waveEnded = true;
+      state.breakTimer = CONFIG.waveBreak;
+      state.score += CONFIG.waveBonus;
+    }
+  } else {
+    state.breakTimer -= dt;
+    if (state.breakTimer <= 0) startWave(state.wave + 1);
+  }
+}
+
+// Earliest bully whose circle the snowball's path segment overlaps this frame
+function firstBullyHit(ax, ay, bx, by) {
+  const sr = CONFIG.snowballRadius;
+  const dx = bx - ax, dy = by - ay, len2 = dx * dx + dy * dy;
+  let hit = null, hitT = Infinity;
+  for (const b of state.bullies) {
+    if (b.state !== 'walking') continue;
+    let t = len2 ? ((b.x - ax) * dx + (b.y - ay) * dy) / len2 : 0;
+    t = Math.max(0, Math.min(1, t));
+    const cx = ax + dx * t - b.x, cy = ay + dy * t - b.y;
+    const R = sr + CONFIG.bullyTypes[b.type].radius;
+    if (cx * cx + cy * cy <= R * R && t < hitT) { hit = b; hitT = t; }
+  }
+  return hit;
+}
+
+function hitBully(b) {
+  const T = CONFIG.bullyTypes[b.type];
+  b.hp--;
+  if (b.hp > 0) {                       // Big Kid survives the first hit: white flash
+    b.flash = CONFIG.hitFlashTime;
+    sfx('clank');
+  } else {
+    b.state = 'falling';
+    b.t = 0;
+    state.score += T.points;
+    sfx('hit');
+  }
+  for (let i = 0; i < CONFIG.puffCount; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const sp = CONFIG.puffSpeed * (0.5 + Math.random() * 0.5);
+    state.particles.push({
+      x: b.x, y: b.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 10,
+      life: CONFIG.puffLife, c: Math.random() < 0.5 ? COLORS.snow : COLORS.ice,
+    });
+  }
+}
+
+function updateBullies(dt) {
+  for (let i = state.bullies.length - 1; i >= 0; i--) {
+    const b = state.bullies[i], T = CONFIG.bullyTypes[b.type];
+    if (b.flash > 0) b.flash -= dt;
+    if (b.state === 'walking') {
+      b.y += b.speed * dt;
+      b.age += dt;
+      if (T.swayAmp) b.x = b.x0 + Math.sin(b.age * T.swayFreq * Math.PI * 2 + b.ph) * T.swayAmp;
+      if (b.y + T.halfH >= CONFIG.fortTop) {             // reached the fort
+        state.bullies.splice(i, 1);
+        damageFort(T.fortDamage);
+      }
+    } else {
+      b.t += dt;
+      if (b.state === 'falling' && b.t >= CONFIG.fallTime) { b.state = 'fading'; b.t = 0; }
+      else if (b.state === 'fading' && b.t >= CONFIG.fadeTime) state.bullies.splice(i, 1);
     }
   }
 }
+
+function updateParticles(dt) {
+  for (let i = state.particles.length - 1; i >= 0; i--) {
+    const p = state.particles[i];
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.vy += CONFIG.puffGravity * dt;
+    p.life -= dt;
+    if (p.life <= 0) state.particles.splice(i, 1);
+  }
+}
+
+function damageFort(n) {
+  state.health = Math.max(0, state.health - n);
+  state.flash = CONFIG.fortFlashTime;
+  sfx('fort');
+  if (state.health <= 0) gameOver();
+}
+
+function gameOver() {
+  endAim();
+  state.newBest = state.score > state.best;
+  if (state.newBest) { state.best = state.score; saveBest(state.best); }
+  state.mode = 'gameover';
+  sfx('over');
+}
+
+// Auto-pause when the tab is hidden
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && state.mode === 'playing') setMode('paused');
+});
 
 // ---------- Draw ----------
 function drawFlakes() {
@@ -321,16 +713,252 @@ function drawSnowball(s) {
   rect(COLORS.snow, x - 3, y - 1, 6, 2);
 }
 
+// Crack polylines (x,y pairs, y relative to the fort top); crack i shows after i+1 health lost
+const CRACKS = [
+  [30, 0, 34, 8, 30, 15], [120, 0, 116, 10, 122, 18], [70, 5, 74, 14, 70, 24],
+  [150, 10, 146, 22, 152, 30], [10, 12, 16, 22, 12, 32], [95, 10, 100, 20, 94, 30, 98, 40],
+  [50, 20, 56, 30, 50, 42], [135, 25, 130, 36, 136, 48], [25, 30, 20, 40, 28, 49],
+  [75, 30, 82, 40, 78, 49],
+];
+
+function drawFort() {
+  ctx.drawImage(fort, 0, CONFIG.fortTop);
+  const lost = Math.min(CONFIG.fortHealth - state.health, CRACKS.length);
+  for (let i = 0; i < lost; i++) {
+    const c = CRACKS[i];
+    for (let k = 0; k + 3 < c.length; k += 2) {
+      pixLine(c[k], CONFIG.fortTop + c[k + 1], c[k + 2], CONFIG.fortTop + c[k + 3], COLORS.night);
+    }
+  }
+  if (state.flash > 0) {
+    ctx.globalAlpha = 0.7 * state.flash / CONFIG.fortFlashTime;
+    rect(COLORS.red, 0, CONFIG.fortTop, CONFIG.W, CONFIG.H - CONFIG.fortTop);
+    ctx.globalAlpha = 1;
+  }
+}
+
+// Sprite size (w x h standing, lw x lh lying) and colours per type. r(colour, x, y, w, h) draws
+// relative to the sprite's top-left; s alternates 0/1 for the walk cycle.
+const LOOK = {
+  regular: { w: 10, h: 14, lw: 14, lh: 8,  hair: COLORS.brown },
+  runner:  { w: 8,  h: 12, lw: 11, lh: 7,  hair: COLORS.hatGreen, coat: COLORS.shadow },
+  big:     { w: 14, h: 16, lw: 16, lh: 11, hair: COLORS.black, coat: COLORS.coatBlue },
+  sled:    { w: 14, h: 11, lw: 14, lh: 7,  hair: COLORS.gold, coat: COLORS.orange },
+};
+LOOK.regular.coat = COLORS.red;
+
+const SPRITES = {
+  regular: (r, s) => {
+    r(COLORS.brown, 2, 0, 6, 2);                          // hair
+    r(COLORS.skin, 2, 2, 6, 4);                           // face
+    r(COLORS.black, 3, 3, 1, 1); r(COLORS.black, 6, 3, 1, 1);
+    r(COLORS.red, 1, 6, 8, 5);                            // red coat
+    r(COLORS.red, 0, 6, 1, 4); r(COLORS.red, 9, 6, 1, 4);
+    r(COLORS.skin, 0, 10, 1, 1); r(COLORS.skin, 9, 10, 1, 1);
+    r(COLORS.black, 2, 11, 2, 3 - s);                     // legs swap each step
+    r(COLORS.black, 6, 11, 2, 2 + s);
+  },
+  runner: (r, s) => {                                     // small kid, green hat
+    r(COLORS.hatGreen, 1, 0, 6, 3);
+    r(COLORS.hatGreen, 0, 2, 8, 1);                       // brim
+    r(COLORS.skin, 1, 3, 6, 3);
+    r(COLORS.black, 2, 4, 1, 1); r(COLORS.black, 5, 4, 1, 1);
+    r(COLORS.shadow, 1, 6, 6, 3);                         // light-blue jacket
+    r(COLORS.shadow, 0, 6, 1, 2); r(COLORS.shadow, 7, 6, 1, 2);
+    r(COLORS.black, 1, 9, 2, 3 - s);
+    r(COLORS.black, 5, 9, 2, 2 + s);
+  },
+  big: (r, s) => {                                        // large kid, blue coat
+    r(COLORS.black, 3, 0, 8, 2);                          // hair
+    r(COLORS.skin, 3, 2, 8, 5);
+    r(COLORS.black, 4, 3, 2, 1); r(COLORS.black, 8, 3, 2, 1);   // angry brows
+    r(COLORS.black, 5, 4, 1, 1); r(COLORS.black, 8, 4, 1, 1);
+    r(COLORS.coatBlue, 1, 7, 12, 6);
+    r(COLORS.coatBlue, 0, 7, 1, 5); r(COLORS.coatBlue, 13, 7, 1, 5);
+    r(COLORS.skin, 0, 12, 1, 1); r(COLORS.skin, 13, 12, 1, 1);
+    r(COLORS.snow, 6, 8, 2, 1); r(COLORS.snow, 6, 10, 2, 1);    // coat buttons
+    r(COLORS.black, 3, 13, 3, 3 - s);
+    r(COLORS.black, 8, 13, 3, 2 + s);
+  },
+  sled: (r) => {                                          // kid riding a sled
+    r(COLORS.gold, 4, 0, 5, 2);                           // hat
+    r(COLORS.skin, 4, 2, 5, 3);
+    r(COLORS.black, 5, 3, 1, 1); r(COLORS.black, 7, 3, 1, 1);
+    r(COLORS.orange, 3, 5, 7, 3);                         // orange coat
+    r(COLORS.orange, 2, 5, 1, 2); r(COLORS.orange, 10, 5, 1, 2);
+    r(COLORS.brown, 0, 8, 14, 2);                         // sled plank
+    r(COLORS.black, 1, 10, 12, 1);                        // runners
+  },
+};
+
+// Flat on its back, face up (shared by all types)
+function drawLying(r, L, T, type) {
+  const len = L.lw, th = L.lh, hd = Math.round(th * 0.6), lg = Math.round(th * 0.4);
+  r(COLORS.skin, 0, 1, hd, th - 2);
+  r(L.hair, 0, 1, 2, th - 2);
+  r(COLORS.black, hd - 2, 2, 1, 1); r(COLORS.black, hd - 2, th - 3, 1, 1);
+  r(L.coat, hd, 0, len - hd - lg, th);
+  r(COLORS.black, len - lg, 1, lg, 2); r(COLORS.black, len - lg, th - 3, lg, 2);
+  if (type === 'sled') r(COLORS.brown, 0, th, len, 2);
+}
+
+function drawBully(b) {
+  const T = CONFIG.bullyTypes[b.type], L = LOOK[b.type];
+  const x = Math.round(b.x), y = Math.round(b.y);
+  const white = b.flash > 0;                              // hit flash: draw everything snow white
+  ctx.globalAlpha = b.state === 'fading' ? 1 - b.t / CONFIG.fadeTime : 1;
+  let ox, oy;
+  if (b.state === 'walking') { ox = x - Math.round(L.w / 2); oy = y - T.halfH; }
+  else { ox = x - Math.round(L.lw / 2); oy = y - Math.round(L.lh / 2); }
+  const r = (c, px, py, w, h) => rect(white ? COLORS.snow : c, ox + px, oy + py, w, h);
+  if (b.state === 'walking') SPRITES[b.type](r, Math.floor(state.time * 6 + b.ph) % 2);
+  else drawLying(r, L, T, b.type);
+  ctx.globalAlpha = 1;
+}
+
+function drawParticles() {
+  for (const p of state.particles) {
+    ctx.globalAlpha = Math.max(0, p.life / CONFIG.puffLife);
+    rect(p.c, p.x, p.y, 2, 2);
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ---- UI ----
+const btnH = () => Math.max(CONFIG.btnMinInternal, Math.ceil(CONFIG.btnMinPx / view.scale));
+
+function button(label, cx, cy, w, hMul, onTap, color) {
+  const h = Math.ceil(btnH() * hMul);
+  const x = Math.round(cx - w / 2), y = Math.round(cy - h / 2);
+  state.buttons.push({ x, y, w, h, onTap });
+  rect(COLORS.night, x - 1, y - 1, w + 2, h + 2);
+  rect(color || COLORS.gold, x, y, w, h);
+  rect(color ? COLORS.shadow : '#e6b92e', x, y + h - 2, w, 2);
+  drawText(label, cx, y + Math.round((h - 10) / 2), 2, COLORS.night, 'center');
+  return h;
+}
+
+function dim() {
+  ctx.globalAlpha = 0.65;
+  rect(COLORS.night, 0, 0, CONFIG.W, CONFIG.H);
+  ctx.globalAlpha = 1;
+}
+
+function drawFlake(x, y, on) {
+  ctx.globalAlpha = on ? 1 : 0.35;
+  const c = on ? COLORS.snow : COLORS.shadow;
+  rect(c, x + 2, y, 1, 5); rect(c, x, y + 2, 5, 1);                   // plus
+  rect(c, x, y, 1, 1); rect(c, x + 4, y, 1, 1);                       // diagonals
+  rect(c, x + 1, y + 1, 1, 1); rect(c, x + 3, y + 1, 1, 1);
+  rect(c, x + 1, y + 3, 1, 1); rect(c, x + 3, y + 3, 1, 1);
+  rect(c, x, y + 4, 1, 1); rect(c, x + 4, y + 4, 1, 1);
+  ctx.globalAlpha = 1;
+}
+
+function drawHud() {
+  ctx.globalAlpha = 0.7;
+  rect(COLORS.night, 0, 0, CONFIG.W, 11);
+  rect(COLORS.night, 1, 12, CONFIG.fortHealth * 6 + 2, 9);
+  ctx.globalAlpha = 1;
+  drawText('SCORE ' + state.score, 3, 3, 1, COLORS.snow);
+  drawText('WAVE ' + state.wave, CONFIG.W / 2, 3, 1, COLORS.snow, 'center');
+  drawText('BEST ' + Math.max(state.best, state.score), CONFIG.W - 3, 3, 1, COLORS.snow, 'right');
+  for (let i = 0; i < CONFIG.fortHealth; i++) drawFlake(3 + i * 6, 14, i < state.health);
+
+  // Pause button (square, at least 44 px on screen); only tappable while playing
+  const s = btnH(), x = CONFIG.W - 3 - s, y = 13;
+  ctx.globalAlpha = 0.7;
+  rect(COLORS.night, x, y, s, s);
+  ctx.globalAlpha = 1;
+  const bw = Math.max(2, Math.round(s / 6)), bh = Math.round(s / 2);
+  rect(COLORS.snow, x + Math.round(s / 2) - bw - 1, y + Math.round((s - bh) / 2), bw, bh);
+  rect(COLORS.snow, x + Math.round(s / 2) + 1, y + Math.round((s - bh) / 2), bw, bh);
+  if (state.mode === 'playing') state.buttons.push({ x, y, w: s, h: s, onTap: () => setMode('paused') });
+  drawMuteButton(x - s - 4, y, state.mode === 'playing');
+}
+
+function drawMuteButton(x, y, tappable) {
+  const s = btnH();
+  ctx.globalAlpha = 0.7;
+  rect(COLORS.night, x, y, s, s);
+  ctx.globalAlpha = 1;
+  const cx = x + Math.round(s / 2) - 1, cy = y + Math.round(s / 2);
+  rect(COLORS.snow, cx - 4, cy - 1, 2, 3);                // speaker
+  rect(COLORS.snow, cx - 2, cy - 2, 1, 5);
+  rect(COLORS.snow, cx - 1, cy - 3, 1, 7);
+  if (audio.muted) {
+    pixLine(cx + 2, cy - 2, cx + 5, cy + 1, COLORS.red);  // red X
+    pixLine(cx + 2, cy + 1, cx + 5, cy - 2, COLORS.red);
+  } else {
+    rect(COLORS.snow, cx + 2, cy - 1, 1, 3);              // sound waves
+    rect(COLORS.snow, cx + 4, cy - 3, 1, 7);
+  }
+  if (tappable) state.buttons.push({ x, y, w: s, h: s, onTap: toggleMute });
+}
+
+function drawBanner() {
+  if (state.mode !== 'playing' || state.banner <= 0) return;
+  ctx.globalAlpha = Math.min(1, state.banner / 0.4);   // fade out over the last 0.4 s
+  drawTextShadow('WAVE ' + state.wave, CONFIG.W / 2, 100, 3, COLORS.gold, 'center');
+  ctx.globalAlpha = 1;
+}
+
+// Install hint: only after the browser fires beforeinstallprompt; gone once installed
+let installEvent = null;
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvent = e; });
+window.addEventListener('appinstalled', () => { installEvent = null; });
+function promptInstall() {
+  const e = installEvent;
+  installEvent = null;               // a prompt event can only be used once
+  if (e) e.prompt();
+}
+
+function drawTitle() {
+  drawTextShadow('SNOWBALL', CONFIG.W / 2, 40, 4, COLORS.snow, 'center');
+  drawTextShadow('BEST: ' + state.best, CONFIG.W / 2, 78, 2, COLORS.gold, 'center');
+  button('TAP TO PLAY', CONFIG.W / 2, 150, 140, 1.5, startGame);
+  if (installEvent) {
+    const playH = Math.ceil(btnH() * 1.5);
+    button('INSTALL', CONFIG.W / 2, 150 + playH / 2 + btnH() / 2 + 12, 90, 1, promptInstall, COLORS.ice);
+  }
+  drawMuteButton(CONFIG.W - 3 - btnH(), 3, true);
+}
+
+function drawPaused() {
+  dim();
+  drawTextShadow('PAUSED', CONFIG.W / 2, 80, 3, COLORS.snow, 'center');
+  const h = btnH();
+  button('RESUME', CONFIG.W / 2, 140, 110, 1, () => setMode('playing'));
+  button('QUIT', CONFIG.W / 2, 140 + h + 10, 110, 1, () => { resetGame(); setMode('title'); });
+}
+
+function drawGameOver() {
+  dim();
+  drawTextShadow('GAME OVER', CONFIG.W / 2, 50, 3, COLORS.snow, 'center');
+  drawTextShadow('SCORE: ' + state.score, CONFIG.W / 2, 92, 2, COLORS.snow, 'center');
+  drawTextShadow('BEST: ' + state.best, CONFIG.W / 2, 112, 2, COLORS.snow, 'center');
+  if (state.newBest) drawTextShadow('NEW BEST!', CONFIG.W / 2, 136, 2, COLORS.gold, 'center');
+  button('PLAY AGAIN', CONFIG.W / 2, 190, 130, 1.3, startGame);
+}
+
 function draw() {
+  state.buttons = [];
   ctx.clearRect(0, 0, CONFIG.W, CONFIG.H);
   ctx.drawImage(bg, 0, 0);
   drawFlakes();
+  for (const b of state.bullies) drawBully(b);
   drawKid();
-  ctx.drawImage(fort, 0, CONFIG.fortTop);
+  drawFort();
   drawArm();
   drawCooldownRing();
   drawAimLine();
   for (const s of state.snowballs) drawSnowball(s);
+  drawParticles();
+  if (state.mode === 'title') { drawTitle(); return; }
+  drawHud();
+  drawBanner();
+  if (state.mode === 'paused') drawPaused();
+  else if (state.mode === 'gameover') drawGameOver();
 }
 
 // ---------- Loop ----------
@@ -338,7 +966,8 @@ let last = performance.now();
 function frame(now) {
   const dt = Math.min(CONFIG.maxDt, (now - last) / 1000);
   last = now;
-  update(dt);
+  if (state.mode === 'playing') update(dt);
+  else if (state.mode !== 'paused') updateFlakes(dt);   // snow keeps falling on title / game over
   ctx.imageSmoothingEnabled = false;
   draw();
   requestAnimationFrame(frame);
