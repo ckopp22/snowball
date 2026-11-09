@@ -70,7 +70,9 @@ const CONFIG = {
   // Bullies
   bullyMargin: 8,         // keep spawn columns this far from the side edges
   regularSpeed: 14,       // px/s at wave 1; every type's speed is a multiple of this
-  hitFlashTime: 0.12,     // s white flash when a Big Kid survives a hit
+  hitFlashTime: 0.12,     // s white flash when a Big Kid (or Yeti) survives a hit
+  yetiEvery: 5,           // Yetis per wave: 1 from the Yeti's first wave, +1 every this many waves, up to yetiMax
+  yetiMax: 3,
   footstepGap: 6,         // px walked between footprints (they alternate left / right)
   footstepLife: 3,        // s a footprint takes to fade into the snow
   footstepAlpha: 0.5,     // starting opacity
@@ -86,6 +88,8 @@ const CONFIG = {
     big:     { speedMul: 0.6, hp: 2, points: 30, fortDamage: 2, radius: 8, halfH: 8, from: 5, weight: 2,  weightPer: 0.5, weightMax: 6 },
     sled:    { speedMul: 1.8, hp: 1, points: 25, fortDamage: 1, radius: 7, halfH: 6, from: 8, weight: 2,  weightPer: 0.5, weightMax: 5,
                swayAmp: 16, swayFreq: 0.35 }, // px and Hz of the side-to-side drift
+    // Yeti: not part of the random mix (special); a fixed number of them is slipped into each wave from wave 11
+    yeti:    { speedMul: 0.7, hp: 5, points: 100, fortDamage: 4, radius: 10, halfH: 10, from: 11, weight: 0, weightPer: 0, weightMax: 0, special: true },
   },
   fallTime: 0.4,          // s flat on its back
   fadeTime: 0.3,          // s fade-out after the fall
@@ -428,6 +432,7 @@ fort.height = fortMask.height = fortShadow.height = CONFIG.H;
 const state = {
   mode: 'title',       // title | playing | paused | gameover
   bullies: [],
+  yetiLeft: 0,         // Yetis still to spawn this wave
   particles: [],
   prints: [],          // footprints: { x, y, t, w }
   buttons: [],         // rebuilt every frame by the draw code, used for tap tests
@@ -622,11 +627,16 @@ function update(dt) {
 const waveCount = n => Math.min(CONFIG.waveMax, CONFIG.waveBase + CONFIG.wavePerN * n);
 // Speed grows 4% per wave, compounding, capped at 2.5x
 const waveSpeed = n => CONFIG.regularSpeed * Math.min(CONFIG.speedCap, Math.pow(1 + CONFIG.speedGrowth, n - 1));
+// Yetis in wave n: none before their first wave, then 1, +1 every yetiEvery waves, capped at yetiMax
+const yetiCount = n => {
+  const from = CONFIG.bullyTypes.yeti.from;
+  return n < from ? 0 : Math.min(CONFIG.yetiMax, 1 + Math.floor((n - from) / CONFIG.yetiEvery));
+};
 const waveGap = n => CONFIG.gapMin + (CONFIG.gapStart - CONFIG.gapMin) * Math.pow(CONFIG.gapDecay, n - 1);
 
 function resetGame() {
   Object.assign(state, {
-    snowballs: [], bullies: [], particles: [], prints: [], cooldown: 0, swing: 0,
+    snowballs: [], bullies: [], yetiLeft: 0, particles: [], prints: [], cooldown: 0, swing: 0,
     score: 0, newBest: false, health: CONFIG.fortHealth, flash: 0,
     wave: 0, toSpawn: 0, spawnTimer: 0, waveEnded: false, breakTimer: 0, banner: 0, time: 0,
     power: null, avalanche: null, powerTimer: CONFIG.powerFirstDelay, gun: 0, gunTimer: 0, treesRemoved: 0, treeReturnTimer: 0, popup: null, remote: freshRemote(),
@@ -649,6 +659,7 @@ function startWave(n) {
   sfx('wave');
   state.wave = n;
   state.toSpawn = waveCount(n);
+  state.yetiLeft = yetiCount(n);                 // spawned at random points of the wave (they replace regular spawns)
   state.spawnTimer = CONFIG.firstSpawnDelay;
   state.waveEnded = false;
   state.banner = CONFIG.bannerTime;
@@ -662,6 +673,7 @@ function pickType(wave) {
   let total = 0;
   for (const k in CONFIG.bullyTypes) {
     const T = CONFIG.bullyTypes[k];
+    if (T.special) continue;                         // Yetis are placed by the wave, not rolled
     const w = wave >= T.from ? Math.min(T.weightMax, T.weight + T.weightPer * (wave - T.from)) : 0;
     ws.push([k, w]);
     total += w;
@@ -672,7 +684,14 @@ function pickType(wave) {
 }
 
 function spawnBully() {
-  const type = pickType(state.wave), T = CONFIG.bullyTypes[type];
+  // The chance rises as the wave runs out of spawns, so every Yeti of the wave is guaranteed to appear
+  let type;
+  if (state.yetiLeft > 0 && Math.random() < state.yetiLeft / state.toSpawn) {
+    type = 'yeti';
+    state.yetiLeft--;
+    state.popup = { text: 'YETI INCOMING!', t: 1.8 };
+  } else type = pickType(state.wave);
+  const T = CONFIG.bullyTypes[type];
   const m = CONFIG.bullyMargin + (T.swayAmp || 0);   // leave room for the sled's sway
   const x0 = m + Math.random() * (CONFIG.W - 2 * m);
   state.bullies.push({
@@ -1121,7 +1140,7 @@ function buildSnapshot() {
     g: [r1(state.gun), r1(state.remote.gun)],                                   // machine-gun seconds left [host, guest]
     ha: [r1(state.aimAngle), state.aiming && state.aimValid ? 1 : 0, state.swing],   // host aim, for its arm and dotted line
     B: state.bullies.map(b => [b.id, TYPE_IDS.indexOf(b.type), r1(b.x), r1(b.y), r1(b.vx), r1(b.vy),
-                               STATE_IDS.indexOf(b.state), r1(b.t), b.flash > 0 ? 1 : 0, r1(b.ph), r1(b.ang)]),
+                               STATE_IDS.indexOf(b.state), r1(b.t), b.flash > 0 ? 1 : 0, r1(b.ph), r1(b.ang), b.hp]),
     S: state.snowballs.map(s => [r1(s.x), r1(s.y), r1(s.vx), r1(s.vy)]),
     av: state.avalanche ? r1(state.avalanche.y) : null,
     ev,
@@ -1154,7 +1173,7 @@ function applySnapshot(d) {
   state.bullies = d.B.map(a => {
     const b = old.get(a[0]) || { id: a[0], stepAcc: 0, stepSide: 1 };
     b.type = TYPE_IDS[a[1]]; b.x = a[2]; b.y = a[3]; b.vx = a[4]; b.vy = a[5];
-    b.state = STATE_IDS[a[6]]; b.t = a[7]; b.flash = a[8] ? CONFIG.hitFlashTime : 0; b.ph = a[9]; b.ang = a[10];
+    b.state = STATE_IDS[a[6]]; b.t = a[7]; b.flash = a[8] ? CONFIG.hitFlashTime : 0; b.ph = a[9]; b.ang = a[10]; b.hp = a[11];
     return b;
   });
   state.snowballs = d.S.map(a => ({ x: a[0], y: a[1], vx: a[2], vy: a[3] }));
@@ -1340,6 +1359,7 @@ const LOOK = {
   runner:  { w: 8,  h: 12, lw: 11, lh: 7,  hair: COLORS.hatGreen, coat: COLORS.shadow },
   big:     { w: 14, h: 16, lw: 16, lh: 11, hair: COLORS.black, coat: COLORS.coatBlue },
   sled:    { w: 14, h: 11, lw: 14, lh: 7,  hair: COLORS.gold, coat: COLORS.orange },
+  yeti:    { w: 18, h: 20, lw: 22, lh: 12, hair: COLORS.ice, coat: COLORS.ice },   // bigger than the usual 16x16: it is the boss
 };
 LOOK.regular.coat = COLORS.red;
 
@@ -1376,6 +1396,20 @@ const SPRITES = {
     r(COLORS.black, 3, 13, 3, 3 - s);
     r(COLORS.black, 8, 13, 3, 2 + s);
   },
+  yeti: (r, s) => {                                       // big furry creature: ice-blue fur, dark face, tusks, claws
+    r(COLORS.ice, 4, 0, 10, 8);                           // head
+    r(COLORS.shadow, 3, 1, 1, 6); r(COLORS.shadow, 14, 1, 1, 6);
+    r(COLORS.night, 6, 3, 6, 5);                          // face
+    r(COLORS.snow, 7, 4, 1, 1); r(COLORS.snow, 10, 4, 1, 1);   // eyes
+    r(COLORS.snow, 7, 7, 1, 2); r(COLORS.snow, 10, 7, 1, 2);   // tusks
+    r(COLORS.ice, 1, 8, 16, 9);                           // furry body
+    r(COLORS.shadow, 3, 10, 2, 1); r(COLORS.shadow, 8, 12, 2, 1); r(COLORS.shadow, 13, 10, 2, 1);
+    r(COLORS.shadow, 5, 14, 2, 1); r(COLORS.shadow, 11, 15, 2, 1); r(COLORS.shadow, 1, 16, 16, 1);
+    r(COLORS.ice, 0, 9, 2, 7); r(COLORS.ice, 16, 9, 2, 7);     // arms
+    r(COLORS.night, 0, 16, 2, 2); r(COLORS.night, 16, 16, 2, 2);   // claws
+    r(COLORS.shadow, 3, 17, 5, 3 - s);                    // legs
+    r(COLORS.shadow, 10, 17, 5, 2 + s);
+  },
   sled: (r) => {                                          // kid riding a sled
     r(COLORS.gold, 4, 0, 5, 2);                           // hat
     r(COLORS.skin, 4, 2, 5, 3);
@@ -1389,6 +1423,15 @@ const SPRITES = {
 
 // Flat on its back, face up (shared by all types)
 function drawLying(r, L, T, type) {
+  if (type === 'yeti') {                                  // fallen Yeti: fur blanket, dark face on the left
+    r(COLORS.ice, 0, 0, 22, 12);
+    r(COLORS.shadow, 0, 0, 22, 1); r(COLORS.shadow, 0, 11, 22, 1);
+    r(COLORS.night, 0, 3, 6, 6);
+    r(COLORS.snow, 1, 4, 1, 1); r(COLORS.snow, 1, 7, 1, 1);
+    r(COLORS.shadow, 9, 3, 3, 1); r(COLORS.shadow, 14, 6, 3, 1); r(COLORS.shadow, 11, 8, 3, 1);
+    r(COLORS.night, 20, 1, 2, 3); r(COLORS.night, 20, 8, 2, 3);
+    return;
+  }
   const len = L.lw, th = L.lh, hd = Math.round(th * 0.6), lg = Math.round(th * 0.4);
   r(COLORS.skin, 0, 1, hd, th - 2);
   r(L.hair, 0, 1, 2, th - 2);
@@ -1410,6 +1453,11 @@ function drawBully(b) {
   if (b.state === 'walking') SPRITES[b.type](r, Math.floor(state.time * 6 + b.ph) % 2);
   else drawLying(r, L, T, b.type);
   ctx.globalAlpha = 1;
+  if (b.type === 'yeti' && b.state === 'walking' && b.hp > 0) {   // hit points above its head: one pip per hit left
+    const n = CONFIG.bullyTypes.yeti.hp, px = x - Math.round((n * 3 + 1) / 2), py = oy - 6;
+    rect(COLORS.night, px, py, n * 3 + 1, 4);
+    for (let i = 0; i < n; i++) rect(i < b.hp ? COLORS.red : COLORS.shadow, px + 1 + i * 3, py + 1, 2, 2);
+  }
 }
 
 function drawParticles() {
