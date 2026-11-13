@@ -35,3 +35,14 @@ canvas {
   touch-action: none;
   display: block;
 }
+
+/* Studio logo splash: a real full-resolution image over the canvas so it stays sharp */
+#logo {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  width: min(82vw, 460px);
+  transform: translate(-50%, -50%);
+  opacity: 0;
+  pointer-events: none;
+}

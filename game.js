@@ -124,8 +124,9 @@ const CONFIG = {
   progressKey: 'snowball_progress',             // { level, xp } saved on this device
   // Levels: every game's score is added to the bar; a full bar levels you up and the bar restarts (leftover score carries over).
   levelNames: ['NEWBORN', 'SNOW TODDLER', 'FLAKE FIGHTER', 'SNOWBALL ROOKIE', 'FROST THROWER', 'ICE SLINGER',
-               'BLIZZARD BOSS', 'FROST CAPTAIN', 'SNOW HERO', 'SNOWBALLY LEGEND'],
-  levelCosts: [300, 500, 800, 1200, 1700, 2300, 3000, 3800, 4700],   // score needed to leave level 1..9
+               'BLIZZARD BOSS', 'FROST CAPTAIN', 'SNOW HERO', 'SNOW LEGEND', 'ICE WARDEN', 'WINTER KNIGHT', 'FROST BARON',
+               'BLIZZARD BUFF', 'SNOW SAGE', 'GLACIER KING', 'ARCTIC TITAN', 'FROZEN EMPEROR', 'STORM OF SNOW', 'SNOWBALLY LEGEND'],
+  levelCosts: [1000, 1600, 2400, 3400, 4600, 6000, 7600, 9400, 11400, 13600, 16000, 18600, 21400, 24400, 27600, 31000, 34600, 38400, 42400],   // score needed to leave level 1..19
   levelBarSeconds: 1.4,   // how long a full bar takes to fill on the menu
   confettiCount: 130,
   mutedKey: 'snowball_muted',
@@ -1886,10 +1887,12 @@ function keyBtn(label, x, y, w, h, onTap) {
 
 function drawWavesMenu() {
   drawText5('WAVES', CONFIG.W / 2, 50, 3, COLORS.coatBlue, 'center', COLORS.night);
+  drawBestLine('BEST: ' + state.best, 88, 0);
+  drawBestLine('CO-OP BEST: ' + state.coopBest, 102, 0.37);
   const h = btnH();
-  button('SOLO', CONFIG.W / 2, 110, 100, 1, startGame);
-  button('CO-OP', CONFIG.W / 2, 110 + h + 8, 100, 1, openCoopMenu, COLORS.ice, 1);
-  button('BACK', CONFIG.W / 2, 110 + 2 * (h + 8), 76, 1, () => setMode('title'), COLORS.shadow, 1);
+  button('SOLO', CONFIG.W / 2, 140, 100, 1, startGame);
+  button('CO-OP', CONFIG.W / 2, 140 + h + 8, 100, 1, openCoopMenu, COLORS.ice, 1);
+  button('BACK', CONFIG.W / 2, 140 + 2 * (h + 8), 76, 1, () => setMode('title'), COLORS.shadow, 1);
 }
 
 function drawLevels() {
@@ -2041,26 +2044,19 @@ function drawTreesAndBullies() {
 }
 
 // Studio logo splash on launch: fades in and out, tap to skip
-const logoImg = new Image();
-logoImg.src = './icons/kopp-logo.png';
+const logoEl = document.getElementById('logo');
 const SPLASH_TIME = 2.4;
 let splashT = 0;
 function drawSplash() {
   rect('#ffffff', 0, 0, CONFIG.W, view.h);
-  if (logoImg.complete && logoImg.naturalWidth) {
-    ctx.globalAlpha = Math.max(0, Math.min(1, splashT / 0.5, (SPLASH_TIME - splashT) / 0.5));
-    const w = 150, h = Math.round(w * logoImg.naturalHeight / logoImg.naturalWidth);
-    ctx.imageSmoothingEnabled = true;
-    ctx.drawImage(logoImg, Math.round((CONFIG.W - w) / 2), Math.round((view.h - h) / 2), w, h);
-    ctx.imageSmoothingEnabled = false;
-    ctx.globalAlpha = 1;
-  }
+  if (logoEl) logoEl.style.opacity = Math.max(0, Math.min(1, splashT / 0.5, (SPLASH_TIME - splashT) / 0.5));
   state.buttons.push({ x: 0, y: 0, w: CONFIG.W, h: view.h, onTap: () => setMode('title') });
 }
 
 function draw() {
   state.buttons = [];
   if (state.mode === 'splash') { drawSplash(); return; }
+  if (logoEl && logoEl.parentNode) logoEl.remove();
   const cut = state.mode === 'cutscene';
   const shaking = cut && state.cut.t > CUT.shake && state.cut.t < CUT.shake + 1.2;
   if (shaking) { ctx.save(); ctx.translate(Math.round((Math.random() - 0.5) * 6), Math.round((Math.random() - 0.5) * 6)); }
