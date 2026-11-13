@@ -779,6 +779,7 @@ function storyWin() {
   }
   state.mode = 'levelwin';
   sfx('wave');
+  spawnConfetti();
 }
 
 function startWave(n) {
@@ -855,8 +856,10 @@ function updateWaves(dt) {
       state.waveEnded = true;
       state.breakTimer = CONFIG.waveBreak;
       state.score += CONFIG.waveBonus;
-      if (state.story) storyWin();
+      if (state.story) state.winTimer = 2;
     }
+  } else if (state.winTimer > 0) {
+    if ((state.winTimer -= dt) <= 0) { state.winTimer = 0; storyWin(); }
   } else {
     state.breakTimer -= dt;
     if (state.breakTimer <= 0) startWave(state.wave + 1);
@@ -1166,6 +1169,10 @@ function updateProgress(dt) {
 function celebrate(level) {
   state.levelUpFx = { t: 3.4, level };
   sfx(level >= MAX_LEVEL ? 'legend' : 'fanfare');
+  spawnConfetti();
+}
+
+function spawnConfetti() {
   const colors = [COLORS.gold, COLORS.red, COLORS.coatBlue, COLORS.hatGreen, COLORS.orange, COLORS.snow, COLORS.ice];
   for (let i = 0; i < CONFIG.confettiCount; i++) {
     state.confetti.push({
@@ -1900,7 +1907,7 @@ function drawLevels() {
   const h = btnH();
   for (let n = 1; n <= CONFIG.storyLevels; n++) {
     const col = (n - 1) % 2, row = Math.floor((n - 1) / 2), ok = n <= state.storyUnlocked;
-    button(String(n), CONFIG.W / 2 + (col ? 34 : -34), 70 + row * (h + 8), 56, 1, ok ? (n === 1 ? startCutscene : () => startStory(n)) : () => {}, ok ? COLORS.gold : COLORS.shadow, 1);
+    button(String(n), CONFIG.W / 2 + (col ? 34 : -34), 70 + row * (h + 8), 56, 1, ok ? (n === 1 ? startCutscene : () => startStory(n)) : () => {}, ok ? COLORS.hatGreen : COLORS.shadow, 1);
   }
   button('BACK', CONFIG.W / 2, 70 + 5 * (h + 8) + 6, 76, 1, () => setMode('title'), COLORS.ice, 1);
 }
