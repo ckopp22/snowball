@@ -1,5 +1,5 @@
 // Bump CACHE_VERSION whenever any game file changes so installed copies update.
-const CACHE_VERSION = 'snowball-v36';
+const CACHE_VERSION = 'snowball-v37';
 
 const FILES = [
   './',
@@ -10,6 +10,7 @@ const FILES = [
   './manifest.webmanifest',
   './icons/icon-192.png',
   './icons/icon-512.png',
+  './icons/kopp-logo.png',
   './icons/icon-maskable-512.png',
 ];
 

@@ -469,7 +469,7 @@ fort.height = fortMask.height = fortShadow.height = CONFIG.H;
 
 // ---------- State ----------
 const state = {
-  mode: 'title',       // title | playing | paused | gameover
+  mode: 'splash',      // splash | title | playing | paused | gameover
   bullies: [],
   yetiLeft: 0,         // Yetis still to spawn this wave
   particles: [],
@@ -1979,8 +1979,27 @@ function drawTreesAndBullies() {
   for (const it of items) it.draw();
 }
 
+// Studio logo splash on launch: fades in and out, tap to skip
+const logoImg = new Image();
+logoImg.src = './icons/kopp-logo.png';
+const SPLASH_TIME = 2.4;
+let splashT = 0;
+function drawSplash() {
+  rect('#ffffff', 0, 0, CONFIG.W, view.h);
+  if (logoImg.complete && logoImg.naturalWidth) {
+    ctx.globalAlpha = Math.max(0, Math.min(1, splashT / 0.5, (SPLASH_TIME - splashT) / 0.5));
+    const w = 150, h = Math.round(w * logoImg.naturalHeight / logoImg.naturalWidth);
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(logoImg, Math.round((CONFIG.W - w) / 2), Math.round((view.h - h) / 2), w, h);
+    ctx.imageSmoothingEnabled = false;
+    ctx.globalAlpha = 1;
+  }
+  state.buttons.push({ x: 0, y: 0, w: CONFIG.W, h: view.h, onTap: () => setMode('title') });
+}
+
 function draw() {
   state.buttons = [];
+  if (state.mode === 'splash') { drawSplash(); return; }
   ctx.clearRect(0, 0, CONFIG.W, view.h);
   ctx.drawImage(bg, 0, 0);
   drawFlakes();
@@ -2023,6 +2042,7 @@ function frame(now) {
   if (net.role === 'guest' && (state.mode === 'playing' || state.mode === 'gameover')) updateGuest(dt);   // the host runs the world
   else if (state.mode === 'playing') update(dt);
   else if (state.mode !== 'paused') updateFlakes(dt);   // snow keeps falling on menus / game over
+  if (state.mode === 'splash' && (splashT += dt) >= SPLASH_TIME) setMode('title');
   if (isCoop()) netTick(dt);
   if (state.mode === 'title') updateProgress(dt);
   if (state.mode !== 'paused') updateCelebration(dt);
