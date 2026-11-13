@@ -119,6 +119,8 @@ const CONFIG = {
   btnMinInternal: 24,     // minimum button height in internal px
   storageKey: 'snowball_highscore',
   coopStorageKey: 'snowball_coop_highscore',   // co-op has its own best score
+  storyKey: 'snowball_story',                   // highest Story level unlocked
+  storyLevels: 10,        // Story campaign: each level is one wave (pass or fail); level n uses wave 2n-1's difficulty
   progressKey: 'snowball_progress',             // { level, xp } saved on this device
   // Levels: every game's score is added to the bar; a full bar levels you up and the bar restarts (leftover score carries over).
   levelNames: ['NEWBORN', 'SNOW TODDLER', 'FLAKE FIGHTER', 'SNOWBALL ROOKIE', 'FROST THROWER', 'ICE SLINGER',
@@ -208,6 +210,8 @@ function loadProgress() {
 function saveProgress(p) {
   try { localStorage.setItem(CONFIG.progressKey, JSON.stringify(p)); } catch (e) { /* ignore */ }
 }
+
+function loadStory() { return Math.max(1, Math.min(CONFIG.storyLevels, loadBest(CONFIG.storyKey))); }
 
 function saveBest(v, key) {
   try { localStorage.setItem(key || CONFIG.storageKey, String(v)); } catch (e) { /* ignore */ }
@@ -474,6 +478,8 @@ const state = {
   score: 0,
   best: loadBest(),
   coopBest: loadBest(CONFIG.coopStorageKey),
+  story: null,         // { level, last } while a Story level is running
+  storyUnlocked: loadStory(),
   progress: loadProgress(),   // real level / xp-in-level (saved)
   shown: null,         // what the menu is showing; it catches up to progress with an animation
   lastXp: 0,           // score added to the bar by the game that just ended
@@ -694,7 +700,26 @@ const DEBUG_START_WAVE = parseInt(new URLSearchParams(location.search).get('wave
 function startGame() {
   resetGame();
   state.mode = 'playing';
+  state.story = null;
   startWave(DEBUG_START_WAVE);
+}
+
+function startStory(n) {
+  resetGame();
+  state.mode = 'playing';
+  const first = 2 * (n - 1) + 1;
+  state.story = { level: n };
+  startWave(first);
+}
+
+function storyWin() {
+  awardXp(state.score);
+  if (state.story.level >= state.storyUnlocked && state.storyUnlocked < CONFIG.storyLevels) {
+    state.storyUnlocked = state.story.level + 1;
+    saveBest(state.storyUnlocked, CONFIG.storyKey);
+  }
+  state.mode = 'levelwin';
+  sfx('wave');
 }
 
 function startWave(n) {
@@ -771,6 +796,7 @@ function updateWaves(dt) {
       state.waveEnded = true;
       state.breakTimer = CONFIG.waveBreak;
       state.score += CONFIG.waveBonus;
+      if (state.story) storyWin();
     }
   } else {
     state.breakTimer -= dt;
@@ -796,7 +822,7 @@ function firstBullyHit(ax, ay, bx, by) {
 
 // ---- Power-ups ----
 const rand = (a, b) => a + Math.random() * (b - a);
-const MENU_MODES = ['title', 'coopmenu', 'coophost', 'coopjoin'];
+const MENU_MODES = ['title', 'levels', 'wavesmenu', 'coopmenu', 'coophost', 'coopjoin'];
 
 // Segment-vs-circle; returns t (0..1 along the snowball's path this frame) or null
 function firstPowerHit(ax, ay, bx, by) {
@@ -1113,7 +1139,7 @@ function recordBest(score) {
 
 function gameOver() {
   endAim();
-  recordBest(state.score);
+  if (!state.story) recordBest(state.score);
   awardXp(state.score);
   state.mode = 'gameover';
   sfx('over');
@@ -1613,7 +1639,7 @@ function drawHud() {
   rect(COLORS.night, 1, 12, CONFIG.fortHealth * 6 + 2, 9);
   ctx.globalAlpha = 1;
   drawText('SCORE ' + state.score, 3, 3, 1, COLORS.snow);
-  drawText('WAVE ' + state.wave, CONFIG.W / 2, 3, 1, COLORS.snow, 'center');
+  drawText(state.story ? 'LEVEL ' + state.story.level : 'WAVE ' + state.wave, CONFIG.W / 2, 3, 1, COLORS.snow, 'center');
   drawText('BEST ' + Math.max(bestNow(), state.score), CONFIG.W - 3, 3, 1, COLORS.snow, 'right');
   for (let i = 0; i < CONFIG.fortHealth; i++) drawFlake(3 + i * 6, 14, i < state.health);
   if (state.gun > 0) drawTextShadow('GUN ' + Math.ceil(state.gun), 3, 24, 1, COLORS.coatBlue);
@@ -1683,7 +1709,7 @@ function drawPopup() {
 function drawBanner() {
   if (state.mode !== 'playing' || state.banner <= 0) return;
   ctx.globalAlpha = Math.min(1, state.banner / 0.4);   // fade out over the last 0.4 s
-  drawTextShadow('WAVE ' + state.wave, CONFIG.W / 2, 100, 3, COLORS.gold, 'center');
+  drawTextShadow(state.story ? 'LEVEL ' + state.story.level : 'WAVE ' + state.wave, CONFIG.W / 2, 100, 3, COLORS.gold, 'center');
   ctx.globalAlpha = 1;
 }
 
@@ -1777,9 +1803,13 @@ function drawTitle() {
   drawText5('SNOWBALL', CONFIG.W / 2, 50, 3, COLORS.coatBlue, 'center', COLORS.night);
   drawBestLine('BEST: ' + state.best, 88, 0);
   drawBestLine('CO-OP BEST: ' + state.coopBest, 102, 0.37);
-  button('PLAY', CONFIG.W / 2, 140, 100, 1, startGame);   // smaller main-menu buttons, label gap 2   // menu sits over the trees like a foreground
-  const playH = btnH();
-  button('CO-OP', CONFIG.W / 2, 140 + Math.ceil(playH / 2) + Math.ceil(btnH() / 2) + 8, 66, 1, openCoopMenu, COLORS.ice, 1);   // smaller than Play
+  const sh = button('STORY', CONFIG.W / 2, 140, 100, 1, () => setMode('levels'), COLORS.hatGreen, 1);
+  button('WAVES', CONFIG.W / 2, 140 + sh + 8, 100, 1, () => setMode('wavesmenu'));
+  // level badge on the Story button's top-right corner
+  const bt = 'LV ' + state.storyUnlocked, bw = bt.length * 6 + 5, bx = CONFIG.W / 2 + 50 - bw + 4, by = 140 - Math.ceil(sh / 2) - 5;
+  rect(COLORS.night, bx - 1, by - 1, bw + 2, 12);
+  rect(COLORS.red, bx, by, bw, 10);
+  drawText5(bt, bx + Math.round(bw / 2), by + 2, 1, COLORS.snow, 'center');
   if (installEvent) button('INSTALL', 3 + 43, 3 + Math.ceil(btnH() / 2), 86, 1, promptInstall, COLORS.ice, 1);   // top left
   drawMuteButton(CONFIG.W - 3 - btnH(), 3, true);
 }
@@ -1791,6 +1821,34 @@ function keyBtn(label, x, y, w, h, onTap) {
   rect(COLORS.ice, x, y, w, h);
   rect(COLORS.shadow, x, y + h - 2, w, 2);
   drawGlyph5(label, x + Math.round((w - 10) / 2), y + Math.round((h - 14) / 2), 2, COLORS.night);
+}
+
+function drawWavesMenu() {
+  drawText5('WAVES', CONFIG.W / 2, 50, 3, COLORS.coatBlue, 'center', COLORS.night);
+  const h = btnH();
+  button('SOLO', CONFIG.W / 2, 110, 100, 1, startGame);
+  button('CO-OP', CONFIG.W / 2, 110 + h + 8, 100, 1, openCoopMenu, COLORS.ice, 1);
+  button('BACK', CONFIG.W / 2, 110 + 2 * (h + 8), 76, 1, () => setMode('title'), COLORS.shadow, 1);
+}
+
+function drawLevels() {
+  drawText5('STORY', CONFIG.W / 2, 30, 3, COLORS.coatBlue, 'center', COLORS.night);
+  const h = btnH();
+  for (let n = 1; n <= CONFIG.storyLevels; n++) {
+    const col = (n - 1) % 2, row = Math.floor((n - 1) / 2), ok = n <= state.storyUnlocked;
+    button(String(n), CONFIG.W / 2 + (col ? 34 : -34), 70 + row * (h + 8), 56, 1, ok ? () => startStory(n) : () => {}, ok ? COLORS.gold : COLORS.shadow, 1);
+  }
+  button('BACK', CONFIG.W / 2, 70 + 5 * (h + 8) + 6, 76, 1, () => setMode('title'), COLORS.ice, 1);
+}
+
+function drawLevelWin() {
+  dim();
+  const n = state.story.level, last = n >= CONFIG.storyLevels;
+  drawTextShadow(last ? 'YOU WIN!' : 'LEVEL ' + n + ' CLEAR', CONFIG.W / 2, 60, 2, COLORS.gold, 'center');
+  drawTextShadow('SCORE: ' + state.score, CONFIG.W / 2, 100, 2, COLORS.snow, 'center');
+  let y = 150;
+  if (!last) y += button('NEXT LEVEL', CONFIG.W / 2, y, 140, 1.3, () => startStory(n + 1)) + 10;
+  button('MENU', CONFIG.W / 2, y + Math.ceil(btnH() / 2) + (last ? 0 : 6), 100, 1, () => { resetGame(); state.story = null; setMode('levels'); }, COLORS.ice);
 }
 
 function drawCoopMenu() {
@@ -1848,7 +1906,7 @@ function drawPaused() {
   drawTextShadow('PAUSED', CONFIG.W / 2, 80, 3, COLORS.snow, 'center');
   const h = btnH();
   button('RESUME', CONFIG.W / 2, 140, 110, 1, () => setMode('playing'));
-  button('QUIT', CONFIG.W / 2, 140 + h + 10, 110, 1, () => { awardXp(state.score); resetGame(); setMode('title'); });   // quitting still banks the score
+  button('QUIT', CONFIG.W / 2, 140 + h + 10, 110, 1, () => { awardXp(state.score); resetGame(); state.story = null; setMode('title'); });   // quitting still banks the score
 }
 
 function drawGameOver() {
@@ -1859,7 +1917,10 @@ function drawGameOver() {
   if (state.newBest) drawTextShadow('NEW BEST!', CONFIG.W / 2, 136, 2, COLORS.gold, 'center');
   if (state.lastXp > 0) drawText5('+' + state.lastXp + ' TO YOUR LEVEL BAR', CONFIG.W / 2, 160, 1, COLORS.snow, 'center', COLORS.night);
   if (net.role === 'guest') drawTextShadow('WAITING FOR HOST...', CONFIG.W / 2, 184, 1, COLORS.snow, 'center');
-  else button('PLAY AGAIN', CONFIG.W / 2, 190, 150, 1.3, startGame);
+  else if (state.story) {
+    button('RETRY', CONFIG.W / 2, 190, 150, 1.3, () => startStory(state.story.level));
+    button('MENU', CONFIG.W / 2, 190 + Math.ceil(btnH() * 1.3) + 10, 100, 1, () => { resetGame(); state.story = null; setMode('levels'); }, COLORS.ice);
+  } else button('PLAY AGAIN', CONFIG.W / 2, 190, 150, 1.3, startGame);
   if (isCoop()) button('MENU', CONFIG.W / 2, 190 + Math.ceil(btnH() * 1.3) + 10, 100, 1, leaveCoop, COLORS.ice);
 }
 
@@ -1936,6 +1997,8 @@ function draw() {
   for (const s of state.snowballs) drawSnowball(s);
   drawParticles();
   if (state.mode === 'title') { drawLevelUi(); withInset(drawTitle); }
+  else if (state.mode === 'levels') withInset(drawLevels);
+  else if (state.mode === 'wavesmenu') withInset(drawWavesMenu);
   else if (state.mode === 'coopmenu') withInset(drawCoopMenu);
   else if (state.mode === 'coophost') withInset(drawCoopHost);
   else if (state.mode === 'coopjoin') withInset(drawCoopJoin);
@@ -1945,6 +2008,7 @@ function draw() {
     drawPopup();
     if (state.mode === 'paused') drawPaused();
     else if (state.mode === 'gameover') drawGameOver();
+    else if (state.mode === 'levelwin') drawLevelWin();
   }
   drawCelebration();
   if (isCoop() && net.lost && (state.mode === 'playing' || state.mode === 'gameover')) drawLost();
