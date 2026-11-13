@@ -364,6 +364,8 @@ const FONT5 = {};
 '( 00010,00100,01000,01000,01000,00100,00010|) 01000,00100,00010,00010,00010,00100,01000|/ 00001,00010,00010,00100,01000,01000,10000|+ 00000,00100,00100,11111,00100,00100,00000|0 01110,10001,10011,10101,11001,10001,01110|1 00100,01100,00100,00100,00100,00100,01110|2 01110,10001,00001,00010,00100,01000,11111|3 11110,00001,00001,01110,00001,00001,11110|4 00010,00110,01010,10010,11111,00010,00010|5 11111,10000,11110,00001,00001,10001,01110|6 00110,01000,10000,11110,10001,10001,01110|7 11111,00001,00010,00100,01000,01000,01000|8 01110,10001,10001,01110,10001,10001,01110|9 01110,10001,10001,01111,00001,00010,01100|: 00000,00100,00100,00000,00100,00100,00000|! 00100,00100,00100,00100,00100,00000,00100|- 00000,00000,00000,11111,00000,00000,00000|. 00000,00000,00000,00000,00000,01100,01100'
   .split('|').forEach(g => { FONT5[g[0]] = g.slice(2).split(',').join(''); });
 
+FONT5["'"] = '00100' + '00100' + '01000' + '0'.repeat(20);
+
 function drawGlyph5(ch, x, y, s, color) {
   const g = FONT5[ch];
   if (!g) return;
@@ -702,6 +704,62 @@ function startGame() {
   state.mode = 'playing';
   state.story = null;
   startWave(DEBUG_START_WAVE);
+}
+
+// ---- Story intro (level 1): "normal day" -> boy walks in -> shake -> he runs to the fort spot and builds it -> quote ----
+const CUT = { text1: 0.4, walk: 2.6, stand: 5.4, shake: 6.2, run: 7.6, cloud: 9.4, fort: 9.9, quote: 10.8, end: 16.5 };
+const CUT_MID_Y = 150;
+function startCutscene() {
+  resetGame();
+  state.mode = 'cutscene';
+  state.story = { level: 1 };
+  state.cut = { t: 0 };
+}
+function cutKid() {
+  const t = state.cut.t, k = kidPos(0), lerp = (a, b, u) => a + (b - a) * Math.max(0, Math.min(1, u));
+  if (t < CUT.walk) return null;
+  if (t < CUT.stand) return { x: k.x, y: lerp(-16, CUT_MID_Y, (t - CUT.walk) / (CUT.stand - CUT.walk)), walk: true };
+  if (t < CUT.run) return { x: k.x, y: CUT_MID_Y, walk: false };
+  return { x: k.x, y: lerp(CUT_MID_Y, k.y, (t - CUT.run) / (CUT.cloud - CUT.run)), walk: t < CUT.cloud };
+}
+function cutText(lines, t0, t1, y, s) {
+  const t = state.cut.t;
+  if (t < t0 || t > t1) return;
+  ctx.globalAlpha = Math.max(0, Math.min(1, (t - t0) / 0.4, (t1 - t) / 0.4));
+  lines.forEach((l, i) => drawText5(l, CONFIG.W / 2, y + i * (7 * s + 5), s, COLORS.night, 'center', COLORS.snow));
+  ctx.globalAlpha = 1;
+}
+function drawCutscene() {
+  const t = state.cut.t;
+  if (t >= CUT.fort) {
+    drawFort();
+    const k = kidPos(0);
+    drawKidAt(k.x, k.y, 0, breath(0), 0);
+  } else {
+    const k = cutKid();
+    if (k) drawKidAt(Math.round(k.x), Math.round(k.y), 0, 0, k.walk ? 1 + (Math.floor(t * 8) % 2) : 0);
+  }
+  if (t >= CUT.cloud - 0.5 && t < CUT.quote) {          // cloud of snow puffs over the fort spot
+    const u = (t - (CUT.cloud - 0.5)) / (CUT.quote - CUT.cloud + 0.5);
+    for (let i = 0; i < 26; i++) {
+      const a = i * 2.4, rx = 12 + (i * 37) % 60, cx = 90 + Math.cos(a) * rx, cy = 292 + Math.sin(a) * 26 - u * 8, r = Math.round((4 + (i % 4) * 2) * Math.sin(Math.min(1, u * 1.1) * Math.PI));
+      if (r < 1) continue;
+      ctx.globalAlpha = i % 2 ? 0.95 : 0.8;
+      rect(i % 3 ? COLORS.snow : COLORS.ice, Math.round(cx - r), Math.round(cy - r), r * 2, r * 2);
+      rect(COLORS.shadow, Math.round(cx - r), Math.round(cy + r - 1), r * 2, 1);
+    }
+    ctx.globalAlpha = 1;
+  }
+  withInset(() => {
+    cutText(['IT WAS A NORMAL DAY...'], CUT.text1, CUT.walk - 0.2, 60, 1);
+    cutText(['...UNTIL IT WASN\'T!'], CUT.stand, CUT.run - 0.2, 60, 1);
+    cutText(['THE AGING PROCESS HAS', 'YOU FIRMLY IN ITS GRASP', 'IF YOU NEVER GET THE', 'URGE TO THROW A SNOWBALL.', '', '- DOUG LARSON'], CUT.quote, CUT.end - 0.2, 70, 1);
+    state.buttons.push({ x: 0, y: 0, w: CONFIG.W, h: view.h, onTap: () => startStory(1) });
+  });
+}
+function updateCutscene(dt) {
+  state.cut.t += dt;
+  if (state.cut.t >= CUT.end) startStory(1);
 }
 
 function startStory(n) {
@@ -1372,8 +1430,11 @@ function drawFlakes() {
 // Breathing: every ~3 s the upper body lifts 1 px and settles back (legs and throwing hand stay put); the two boys are out of step
 const breath = slot => (Math.sin(performance.now() / 1000 * 2.2 + slot * 1.3) > 0 ? 1 : 0);
 
-function drawKid(slot) {
-  const { x, y } = kidPos(slot), c = KID_COLORS[slot], b = breath(slot);
+function drawKid(slot) { const { x, y } = kidPos(slot); drawKidAt(x, y, slot, breath(slot), 0); }
+
+// step: 0 = standing, 1 / 2 = the two walking poses (legs alternate)
+function drawKidAt(x, y, slot, b, step) {
+  const c = KID_COLORS[slot];
   rect(COLORS.snow, x + 3, y - b, 2, 1);          // pom
   rect(c.hat, x + 1, y + 1 - b, 6, 2);            // hat
   rect(COLORS.snow, x, y + 3 - b, 8, 1);          // hat cuff
@@ -1383,8 +1444,8 @@ function drawKid(slot) {
   rect(c.coat, x + 1, y + 9 - b, 6, 4 + b);       // coat (stretches so there is no gap)
   rect(c.scarf, x, y + 7 - b, 8, 2);              // scarf
   rect(c.scarf, x + 1, y + 9 - b, 2, 3);          // scarf tail
-  rect(COLORS.black, x + 2, y + 13, 2, 2);        // legs
-  rect(COLORS.black, x + 4, y + 13, 2, 2);
+  rect(COLORS.black, x + 2, y + 13 - (step === 1 ? 1 : 0), 2, 2);        // legs
+  rect(COLORS.black, x + 4, y + 13 - (step === 2 ? 1 : 0), 2, 2);
 }
 
 function drawArm(slot) {
@@ -1836,7 +1897,7 @@ function drawLevels() {
   const h = btnH();
   for (let n = 1; n <= CONFIG.storyLevels; n++) {
     const col = (n - 1) % 2, row = Math.floor((n - 1) / 2), ok = n <= state.storyUnlocked;
-    button(String(n), CONFIG.W / 2 + (col ? 34 : -34), 70 + row * (h + 8), 56, 1, ok ? () => startStory(n) : () => {}, ok ? COLORS.gold : COLORS.shadow, 1);
+    button(String(n), CONFIG.W / 2 + (col ? 34 : -34), 70 + row * (h + 8), 56, 1, ok ? (n === 1 ? startCutscene : () => startStory(n)) : () => {}, ok ? COLORS.gold : COLORS.shadow, 1);
   }
   button('BACK', CONFIG.W / 2, 70 + 5 * (h + 8) + 6, 76, 1, () => setMode('title'), COLORS.ice, 1);
 }
@@ -2000,9 +2061,13 @@ function drawSplash() {
 function draw() {
   state.buttons = [];
   if (state.mode === 'splash') { drawSplash(); return; }
-  ctx.clearRect(0, 0, CONFIG.W, view.h);
+  const cut = state.mode === 'cutscene';
+  const shaking = cut && state.cut.t > CUT.shake && state.cut.t < CUT.shake + 1.2;
+  if (shaking) { ctx.save(); ctx.translate(Math.round((Math.random() - 0.5) * 6), Math.round((Math.random() - 0.5) * 6)); }
+  ctx.clearRect(-8, -8, CONFIG.W + 16, view.h + 16);
   ctx.drawImage(bg, 0, 0);
   drawFlakes();
+  if (cut) { drawCutscene(); if (shaking) ctx.restore(); drawCelebration(); return; }
   drawShadow();
   drawPrints();
   drawTreesAndBullies();
@@ -2041,6 +2106,7 @@ function frame(now) {
   last = now;
   if (net.role === 'guest' && (state.mode === 'playing' || state.mode === 'gameover')) updateGuest(dt);   // the host runs the world
   else if (state.mode === 'playing') update(dt);
+  else if (state.mode === 'cutscene') { updateFlakes(dt); updateCutscene(dt); }
   else if (state.mode !== 'paused') updateFlakes(dt);   // snow keeps falling on menus / game over
   if (state.mode === 'splash' && (splashT += dt) >= SPLASH_TIME) setMode('title');
   if (isCoop()) netTick(dt);
