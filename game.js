@@ -134,7 +134,7 @@ const CONFIG = {
   levelNames: ['NEWBORN', 'SNOW TODDLER', 'FLAKE FIGHTER', 'SNOWBALL ROOKIE', 'FROST THROWER', 'ICE SLINGER',
                'BLIZZARD BOSS', 'FROST CAPTAIN', 'SNOW HERO', 'SNOW LEGEND', 'ICE WARDEN', 'WINTER KNIGHT', 'FROST BARON',
                'BLIZZARD BUFF', 'SNOW SAGE', 'GLACIER KING', 'ARCTIC TITAN', 'FROZEN EMPEROR', 'STORM OF SNOW', 'SNOWBALLY LEGEND'],
-  levelCosts: [1000, 1600, 2400, 3400, 4600, 6000, 7600, 9400, 11400, 13600, 16000, 18600, 21400, 24400, 27600, 31000, 34600, 38400, 42400],   // score needed to leave level 1..19
+  levelCosts: [800, 1200, 1800, 2600, 3400, 4500, 5700, 7000, 8600, 10200, 12000, 14000, 16000, 18300, 20700, 23200, 26000, 28800, 31800],   // score needed to leave level 1..19
   levelBarSeconds: 1.4,   // how long a full bar takes to fill on the menu
   confettiCount: 130,
   mutedKey: 'snowball_muted',
