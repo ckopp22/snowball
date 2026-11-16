@@ -25,6 +25,7 @@ const CONFIG = {
   homeAttack: 0.5,        // window damage per second = bully fortDamage x this
   homeRepair: 3,          // window hp per second while the boy stands at it
   homeRepairDist: 20,
+  homeL: 20, homeR: 340,  // the house spans these world x's; its 12 px end walls are inside, snow outside
   homeWinHalf: 22,        // half the window opening width
   stickRadius: 18,        // px the joystick knob can travel from where the thumb landed
   handDX: 11,             // where throws and the aim line start, relative to the kid's top-left
@@ -678,7 +679,7 @@ const clampRx = x => Math.max(8, Math.min(CONFIG.W - 8, x)), clampRy = y => Math
 const homeWallY = () => view.h - 90;   // the house sits above the bottom edge so thumbs have room
 function moveRunner(dt) {
   if (state.home) {
-    if (state.stick) state.px = Math.max(10, Math.min(CONFIG.W * 2 - 10, state.px + Math.max(-1, Math.min(1, state.stick.dx)) * CONFIG.homeSpeed * dt));
+    if (state.stick) state.px = Math.max(CONFIG.homeL + 18, Math.min(CONFIG.homeR - 18, state.px + Math.max(-1, Math.min(1, state.stick.dx)) * CONFIG.homeSpeed * dt));
     for (const w of state.wins) if (Math.abs(state.px - w.x) <= CONFIG.homeRepairDist) w.hp = Math.min(CONFIG.homeWinHp, w.hp + CONFIG.homeRepair * dt);
     return;
   }
@@ -716,6 +717,9 @@ function update(dt) {
         const xc = px + (s.x - px) * (py - wy) / (py - s.y);
         if (!state.wins.some(w => Math.abs(xc - w.x) <= CONFIG.homeWinHalf - 1)) { puff(xc, wy); state.snowballs.splice(i, 1); continue; }
       }
+    }
+    if (state.home && s.y > homeWallY() + 5 && (s.x < CONFIG.homeL + 12 || s.x > CONFIG.homeR - 12)) {   // end walls
+      puff(s.x, s.y); state.snowballs.splice(i, 1); continue;
     }
     const bh = firstBullyHit(px, py, s.x, s.y), th = firstTreeHit(px, py, s.x, s.y), ph = firstPowerHit(px, py, s.x, s.y);
     if (ph !== null && (!bh || ph < bh.t) && (!th || ph < th.t)) {   // snowball pops the snowflake
@@ -1585,11 +1589,14 @@ function drawKid(slot) {
 function drawHome() {
   if (!state.home) return;
   const wy = homeWallY(), W2 = CONFIG.W * 2;
-  rect('#a9743a', 0, wy + 10, W2, 52);                       // floor
-  for (let x = 0; x < W2; x += 12) rect('#96622c', x, wy + 10, 1, 52);
-  rect('#4a2f17', 0, wy + 62, W2, 2);
-  rect('#6b4423', 0, wy, W2, 10);                            // wall
-  rect('#4a2f17', 0, wy + 8, W2, 2);
+  const L = CONFIG.homeL, R = CONFIG.homeR, iw = R - L - 24;
+  rect('#a9743a', L + 12, wy + 10, iw, 52);                  // floor
+  for (let x = L + 12; x < R - 12; x += 12) rect('#96622c', x, wy + 10, 1, 52);
+  rect('#6b4423', L, wy, R - L, 10);                         // back wall
+  rect('#4a2f17', L, wy + 8, R - L, 2);
+  rect('#6b4423', L, wy, 12, 64); rect('#4a2f17', L + 10, wy + 10, 2, 52);   // end walls
+  rect('#6b4423', R - 12, wy, 12, 64); rect('#4a2f17', R - 12, wy + 10, 2, 52);
+  rect('#4a2f17', L, wy + 62, R - L, 2);                     // front edge
   for (const w of state.wins) {
     const hw = CONFIG.homeWinHalf;
     rect(COLORS.night, w.x - hw - 2, wy - 1, hw * 2 + 4, 11);   // frame
@@ -1597,6 +1604,18 @@ function drawHome() {
     const n = Math.ceil(w.hp / CONFIG.homeWinHp * 4 - 0.001);
     for (let k = 0; k < n; k++) { rect('#c58b4a', w.x - hw, wy + k * 2 + 1, hw * 2, 2); rect('#8a5a2b', w.x - hw, wy + k * 2 + 2, hw * 2, 1); }
   }
+  drawDoor();
+}
+
+// Decorative barricaded door in the middle of the house (no function yet)
+function drawDoor() {
+  const wy = homeWallY(), x = CONFIG.W;
+  rect(COLORS.night, x - 11, wy - 3, 22, 13);                // frame
+  rect('#4a2f17', x - 9, wy - 1, 18, 11);                    // door
+  rect('#6b4423', x - 9, wy - 1, 8, 11);
+  rect('#c8b24a', x + 4, wy + 4, 2, 2);                      // knob
+  for (const y of [wy, wy + 6]) { rect('#c58b4a', x - 12, y, 24, 3); rect('#8a5a2b', x - 12, y + 2, 24, 1); }   // boards across it
+  for (const sx of [-8, 6]) { rect(COLORS.night, x + sx, wy + 1, 1, 1); rect(COLORS.night, x + sx + 2, wy + 7, 1, 1); }   // nails
 }
 
 // Red flashes at the screen edge when a window off screen is being broken
