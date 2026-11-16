@@ -685,7 +685,7 @@ function updateFlakes(dt) {
 
 const clampRx = x => Math.max(8, Math.min(CONFIG.W - 8, x)), clampRy = y => Math.max(24, Math.min(view.h - 10, y));
 const windowAttackers = w => state.bullies.filter(b => b.state === 'walking' && b.phase === 1 && state.wins[b.win] === w).length;
-const homeWallY = () => view.h - 90;   // the house sits above the bottom edge so thumbs have room
+const homeWallY = () => view.h - 130;   // the house sits above the bottom edge so thumbs have room
 function moveRunner(dt) {
   if (state.home) {
     if (state.stick) state.px = Math.max(CONFIG.homeL + 18, Math.min(CONFIG.homeR - 18, state.px + Math.max(-1, Math.min(1, state.stick.dx)) * CONFIG.homeSpeed * dt));
@@ -696,7 +696,7 @@ function moveRunner(dt) {
       if (w.hp < CONFIG.homeWinHp || n > 1) fixing = w;
       w.hp = Math.min(CONFIG.homeWinHp, w.hp + CONFIG.homeRepair * dt);
     }
-    if (fixing) { if ((state.hammerT = (state.hammerT || 0) - dt) <= 0) { sfx('hammer'); state.hammerT = 0.45; puff(fixing.x + rand(-10, 10), homeWallY() + 6); } } else state.hammerT = 0;
+    if (fixing) { if ((state.hammerT = (state.hammerT || 0) - dt) <= 0) { sfx('hammer'); state.hammerT = 0.45; puff(fixing.x + rand(-10, 10), homeWallY() + 6, ['#8a5a2b', '#c58b4a']); } } else state.hammerT = 0;
     return;
   }
   if (!state.runner || !state.stick) return;
@@ -1125,14 +1125,14 @@ function hitBully(b) {
   puff(b.x, b.y);
 }
 
-function puff(x, y) {
+function puff(x, y, cols) {            // cols: optional [colorA, colorB] instead of snow
   if (net.role === 'host') net.evq.push({ e: 'p', x: r1(x), y: r1(y) });   // the guest shows the same puff
   for (let i = 0; i < CONFIG.puffCount; i++) {
     const a = Math.random() * Math.PI * 2;
     const sp = CONFIG.puffSpeed * (0.5 + Math.random() * 0.5);
     state.particles.push({
       x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 10,
-      life: CONFIG.puffLife, c: Math.random() < 0.5 ? COLORS.snow : COLORS.ice,
+      life: CONFIG.puffLife, c: (cols || [COLORS.snow, COLORS.ice])[Math.random() < 0.5 ? 0 : 1],
     });
   }
 }
