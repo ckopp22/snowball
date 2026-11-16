@@ -20,6 +20,11 @@ const CONFIG = {
   coopKidXs: [79, 93],    // co-op: two boys side by side behind the fort (top-left x of each)
   coopKidY: 279,
   runnerSpeed: 55,        // px/s the Runner moves at full joystick
+  homeSpeed: 70,          // px/s the boy runs along the inside of the Home
+  homeWinHp: 10,          // window boards; enemies chew them down, the boy standing at the window repairs them
+  homeAttack: 0.5,        // window damage per second = bully fortDamage x this
+  homeRepair: 3,          // window hp per second while the boy stands at it
+  homeRepairDist: 16,
   stickRadius: 18,        // px the joystick knob can travel from where the thumb landed
   handDX: 11,             // where throws and the aim line start, relative to the kid's top-left
   handDY: 7,
@@ -229,7 +234,7 @@ const slots = () => (isCoop() ? [0, 1] : [0]);
 const pl = slot => (slot === net.localSlot ? state : state.remote);   // the local player's fields live on state itself
 const freshRemote = () => ({ aimAngle: 90, aimValid: false, aiming: false, cooldown: 0, swing: 0, gun: 0, gunTimer: 0, px: 90, py: 200, walkT: 0 });
 function kidPos(slot) {
-  if (state.runner) { const p = pl(slot); return { x: Math.round(p.px - 4), y: Math.round(p.py - 7) }; }
+  if (state.runner || state.home) { const p = pl(slot); return { x: Math.round(p.px - 4), y: Math.round(p.py - 7) }; }
   return isCoop() ? { x: CONFIG.coopKidXs[slot], y: CONFIG.coopKidY } : { x: CONFIG.kidX, y: CONFIG.kidY };
 }
 function handPos(slot) {
@@ -523,6 +528,9 @@ const state = {
   runner: false,       // Runner waves: the kid roams, no fort
   wantRunner: false,   // what the menu picked (co-op host starts with it)
   typeCoop: false,
+  home: false,         // Home waves: the boy runs inside a house and throws out of its windows
+  wins: [],            // home windows { x, hp }
+  camX: 0,
   walkT: 0,
   px: 90, py: 200,     // runner position (centre of the kid)
   stick: null,         // { id, ax, ay, dx, dy } floating joystick
@@ -604,7 +612,7 @@ window.addEventListener('pointerdown', e => {
   const b = hitButton(toCanvas(e));
   if (b) { b.onTap(); sfx('click'); return; }
   if (state.mode !== 'playing') return;
-  if (state.runner && toCanvas(e).x < CONFIG.W / 2) {          // left half: floating joystick
+  if ((state.runner || state.home) && toCanvas(e).x < CONFIG.W / 2) {          // left half: floating joystick
     if (!state.stick) { const p = toCanvas(e); state.stick = { id: e.pointerId, ax: p.x, ay: p.y, dx: 0, dy: 0 }; }
     return;
   }
@@ -665,7 +673,13 @@ function updateFlakes(dt) {
 }
 
 const clampRx = x => Math.max(8, Math.min(CONFIG.W - 8, x)), clampRy = y => Math.max(24, Math.min(view.h - 10, y));
+const homeWallY = () => view.h - 62;
 function moveRunner(dt) {
+  if (state.home) {
+    if (state.stick) state.px = Math.max(10, Math.min(CONFIG.W * 2 - 10, state.px + Math.max(-1, Math.min(1, state.stick.dx)) * CONFIG.homeSpeed * dt));
+    for (const w of state.wins) if (Math.abs(state.px - w.x) <= CONFIG.homeRepairDist) w.hp = Math.min(CONFIG.homeWinHp, w.hp + CONFIG.homeRepair * dt);
+    return;
+  }
   if (!state.runner || !state.stick) return;
   const st = state.stick, m = Math.hypot(st.dx, st.dy), k = m > 1 ? 1 / m : 1;
   state.px = clampRx(state.px + st.dx * k * CONFIG.runnerSpeed * dt);
@@ -694,6 +708,13 @@ function update(dt) {
     const px = s.x, py = s.y;
     s.x += s.vx * dt;
     s.y += s.vy * dt;
+    if (state.home) {                   // the house wall stops snowballs unless they fly through a window
+      const wy = homeWallY() + 5;
+      if (py > wy && s.y <= wy) {
+        const xc = px + (s.x - px) * (py - wy) / (py - s.y);
+        if (!state.wins.some(w => Math.abs(xc - w.x) <= 13)) { puff(xc, wy); state.snowballs.splice(i, 1); continue; }
+      }
+    }
     const bh = firstBullyHit(px, py, s.x, s.y), th = firstTreeHit(px, py, s.x, s.y), ph = firstPowerHit(px, py, s.x, s.y);
     if (ph !== null && (!bh || ph < bh.t) && (!th || ph < th.t)) {   // snowball pops the snowflake
       collectPower(s.owner || 0);
@@ -705,7 +726,7 @@ function update(dt) {
       puff(th.x, th.y);
       sfx('tree');
       state.snowballs.splice(i, 1);
-    } else if (s.x < -m || s.x > CONFIG.W + m || s.y < -m || s.y > CONFIG.H + m) {
+    } else if (s.x < -m || s.x > (state.home ? CONFIG.W * 2 : CONFIG.W) + m || s.y < -m || s.y > CONFIG.H + m) {
       state.snowballs.splice(i, 1);     // miss: just leaves the screen
     }
   }
@@ -738,18 +759,20 @@ function resetGame() {
     power: null, avalanche: null, powerTimer: CONFIG.powerFirstDelay, gun: 0, gunTimer: 0, treesRemoved: 0, treeReturnTimer: 0, popup: null, remote: freshRemote(),
   });
   endAim();
+  state.wins = [60, 300].map(x => ({ x, hp: CONFIG.homeWinHp }));
   state.stick = null; state.py = state.remote.py = 200;
   state.px = CONFIG.W / 2 + (isCoop() ? (net.localSlot ? 14 : -14) : 0);
   state.remote.px = CONFIG.W / 2 + (net.localSlot ? -14 : 14);
+  if (state.home) { state.px = CONFIG.W; state.py = homeWallY() + 34; }
 }
 
-function setMode(m) { endAim(); state.stick = null; if (MENU_MODES.includes(m)) state.runner = false; state.mode = m; }
+function setMode(m) { endAim(); state.stick = null; if (MENU_MODES.includes(m)) state.runner = state.home = false; state.mode = m; }
 
 // DEBUG (easy to remove): open index.html?wave=8 to start at wave 8
 const DEBUG_START_WAVE = parseInt(new URLSearchParams(location.search).get('wave'), 10) || 1;
 
-function startGame(runner) {
-  if (typeof runner === 'boolean') state.runner = runner;
+function startGame(kind) {
+  if (kind !== undefined) { state.runner = kind === true; state.home = kind === 'home'; }
   resetGame();
   state.mode = 'playing';
   state.story = null;
@@ -813,7 +836,7 @@ function updateCutscene(dt) {
 }
 
 function startStory(n) {
-  state.runner = false;
+  state.runner = state.home = false;
   resetGame();
   state.mode = 'playing';
   const first = 2 * (n - 1) + 1;
@@ -871,6 +894,7 @@ function spawnBully() {
   const T = CONFIG.bullyTypes[type];
   const m = CONFIG.bullyMargin + (T.swayAmp || 0);   // leave room for the sled's sway
   let x0 = m + Math.random() * (CONFIG.W - 2 * m), y0 = -T.halfH;
+  if (state.home) x0 = 12 + Math.random() * (CONFIG.W * 2 - 24);   // Home: the world is two screens wide
   if (state.runner) {                                // Runner: enemies come in from any edge
     const side = Math.floor(Math.random() * 4);
     if (side === 0) { /* top */ }
@@ -880,7 +904,8 @@ function spawnBully() {
   }
   state.bullies.push({
     id: ++bullyId,
-    type,
+    type, phase: 0, win: Math.random() < 0.5 ? 0 : 1,   // Home: 0 walk to the window, 1 chew it, 2 climb in, 3 chase the boy
+
     vx: 0, vy: 0,                                    // velocity, sent to the co-op guest for smooth motion
     x: x0, x0,                                       // x0 = centre column (sway is around it)
     y: y0,
@@ -963,7 +988,7 @@ function collectPower(owner) {
   const opts = ['gun'];                                         // only offer effects that do something
   if (state.health < CONFIG.fortHealth) opts.push('heal');
   if (activeTrees().length) opts.push('trees');
-  if (state.bullies.some(b => b.state === 'walking')) opts.push('avalanche');
+  if (state.bullies.some(b => b.state === 'walking') && !state.home) opts.push('avalanche');
   const pick = opts[Math.floor(Math.random() * opts.length)];
   if (pick === 'gun') {
     const p = pl(owner);                                        // the machine gun goes to whoever popped it
@@ -999,7 +1024,7 @@ function updatePower(dt) {
     state.powerTimer -= dt;
     if (state.powerTimer <= 0) {
       const y = rand(CONFIG.powerMinY, CONFIG.powerMaxY);
-      state.power = { x: rand(18, CONFIG.W - 18), baseY: y, y, age: 0 };
+      state.power = { x: rand(18, (state.home ? CONFIG.W * 2 : CONFIG.W) - 18), baseY: y, y, age: 0 };
     }
   }
   // Machine gun: fires along the current aim direction by itself
@@ -1027,6 +1052,7 @@ function updatePower(dt) {
 // Wave N shows N-1 trees (none in wave 1), up to treeMax; the power-up can hide them for a while
 function activeTrees() {
   if (MENU_MODES.includes(state.mode)) return CONFIG.treePositions.slice(0, CONFIG.treeMax);   // menus show them all
+  if (state.home) return [];
   return CONFIG.treePositions.slice(0, Math.max(0, Math.min(CONFIG.treeMax, state.wave - 1) - state.treesRemoved));
 }
 
@@ -1088,10 +1114,40 @@ function puff(x, y) {
   }
 }
 
+function updateHomeBully(b, T, dt) {          // true when it reaches the boy
+  b.age += dt;
+  const wy = homeWallY(), win = state.wins[b.win], px = b.x, py = b.y;
+  let tx = state.px, ty = state.py;
+  if (b.phase === 1) {
+    win.hp = Math.max(0, win.hp - T.fortDamage * CONFIG.homeAttack * dt);
+    b.ang = Math.PI / 2;
+    if (win.hp <= 0) { b.phase = 2; puff(win.x, wy + 4); sfx('fort'); }
+    b.vx = b.vy = 0;
+    return false;
+  }
+  if (b.phase === 0) { tx = win.x; ty = wy - T.halfH; }
+  else if (b.phase === 2) { tx = win.x; ty = wy + 16; }
+  const dx = tx - b.x, dy = ty - b.y, d = Math.hypot(dx, dy), step = b.speed * dt;
+  if (d > 0.01) b.ang = Math.atan2(dy, dx);
+  if (d <= step) { b.x = tx; b.y = ty; } else { b.x += dx / d * step; b.y += dy / d * step; }
+  b.x0 = b.x;
+  if (d <= step) {
+    if (b.phase === 0) b.phase = win.hp > 0 ? 1 : 2;
+    else if (b.phase === 2) b.phase = 3;
+  }
+  b.vx = dt > 0 ? (b.x - px) / dt : 0; b.vy = dt > 0 ? (b.y - py) / dt : 0;
+  footstep(b, T, px, py);
+  return b.phase >= 2 && Math.hypot(b.x - state.px, b.y - state.py) <= 6 + T.radius;
+}
+
 function updateBullies(dt) {
   for (let i = state.bullies.length - 1; i >= 0; i--) {
     const b = state.bullies[i], T = CONFIG.bullyTypes[b.type];
     if (b.flash > 0) b.flash -= dt;
+    if (b.state === 'walking' && state.home) {
+      if (updateHomeBully(b, T, dt)) { state.bullies.splice(i, 1); damageFort(T.fortDamage); }
+      continue;
+    }
     if (b.state === 'walking') {
       b.age += dt;
       const prevX = b.x, prevY = b.y;
@@ -1520,13 +1576,38 @@ const breath = slot => (Math.sin(performance.now() / 1000 * 2.2 + slot * 1.3) > 
 
 function drawKid(slot) {
   const { x, y } = kidPos(slot);
-  const p = pl(slot), walking = state.runner && (p === state ? state.stick && (state.stick.dx || state.stick.dy) : p.walkT > 0);
+  const p = pl(slot), walking = (state.runner || state.home) && (p === state ? state.stick && (state.home ? Math.abs(state.stick.dx) > 0.1 : (state.stick.dx || state.stick.dy)) : p.walkT > 0);
   drawKidAt(x, y, slot, breath(slot), walking ? 1 + (Math.floor(state.time * 8) % 2) : 0);
+}
+
+function drawHome() {
+  if (!state.home) return;
+  const wy = homeWallY(), W2 = CONFIG.W * 2;
+  rect('#a9743a', 0, wy + 10, W2, view.h - wy);              // floor
+  for (let x = 0; x < W2; x += 12) rect('#96622c', x, wy + 10, 1, view.h - wy);
+  rect('#6b4423', 0, wy, W2, 10);                            // wall
+  rect('#4a2f17', 0, wy + 8, W2, 2);
+  for (const w of state.wins) {
+    rect(COLORS.night, w.x - 15, wy - 1, 30, 11);            // frame
+    rect(COLORS.ice, w.x - 13, wy, 26, 9);                   // opening
+    const n = Math.ceil(w.hp / CONFIG.homeWinHp * 4 - 0.001);
+    for (let k = 0; k < n; k++) { rect('#c58b4a', w.x - 13, wy + k * 2 + 1, 26, 2); rect('#8a5a2b', w.x - 13, wy + k * 2 + 2, 26, 1); }
+  }
+}
+
+// Red flashes at the screen edge when a window off screen is being broken
+function drawWinAlerts() {
+  if (!state.home || state.mode !== 'playing' || Math.floor(state.time * 4) % 2) return;
+  const wy = homeWallY();
+  for (const w of state.wins) {
+    if (w.hp >= CONFIG.homeWinHp * 0.7 || Math.abs(w.x - state.camX - CONFIG.W / 2) < CONFIG.W / 2 + 14) continue;
+    rect(COLORS.red, w.x < state.camX ? 0 : CONFIG.W - 4, wy - 4, 4, 14);
+  }
 }
 
 function drawStick() {
   const st = state.stick;
-  if (!st || !state.runner || state.mode !== 'playing') return;
+  if (!st || !(state.runner || state.home) || state.mode !== 'playing') return;
   const R = CONFIG.stickRadius;
   ctx.globalAlpha = 0.35;
   for (let i = 0; i < 24; i++) { const a = i / 24 * Math.PI * 2; rect(COLORS.night, st.ax + Math.cos(a) * R - 1, st.ay + Math.sin(a) * R - 1, 2, 2); }
@@ -1998,13 +2079,14 @@ function drawWavesMenu() {
   button('BACK', CONFIG.W / 2, 140 + 2 * (h + 8), 76, 1, () => setMode('title'), COLORS.shadow, 1);
 }
 
-function chooseWaveType(r) { state.wantRunner = r; if (state.typeCoop) openCoopMenu(); else startGame(r); }
+function chooseWaveType(r) { state.wantRunner = r === true; if (state.typeCoop) openCoopMenu(); else startGame(r); }
 function drawWaveType() {
   drawText5('WAVES', CONFIG.W / 2, 50, 3, COLORS.coatBlue, 'center', COLORS.night);
   const h = btnH();
   button('SNOW FORT', CONFIG.W / 2, 110, 110, 1, () => chooseWaveType(false));
   button('RUNNER', CONFIG.W / 2, 110 + h + 8, 110, 1, () => chooseWaveType(true), COLORS.hatGreen, 1);
-  button('BACK', CONFIG.W / 2, 110 + 2 * (h + 8), 76, 1, () => setMode('wavesmenu'), COLORS.shadow, 1);
+  if (!state.typeCoop) button('HOME', CONFIG.W / 2, 110 + 2 * (h + 8), 110, 1, () => chooseWaveType('home'), COLORS.coatBlue, 1);
+  button('BACK', CONFIG.W / 2, 110 + (state.typeCoop ? 2 : 3) * (h + 8), 76, 1, () => setMode('wavesmenu'), COLORS.shadow, 1);
 }
 
 function drawLevels() {
@@ -2113,7 +2195,7 @@ function drawGameOver() {
 function drawShadow() {
   const ox = CONFIG.shadowOffX, oy = CONFIG.shadowOffY;
   ctx.globalAlpha = CONFIG.shadowAlpha;
-  if (!state.runner) ctx.drawImage(fortShadow, ox, oy);
+  if (!state.runner && !state.home) ctx.drawImage(fortShadow, ox, oy);
   for (const sl of slots()) {
     const k = kidPos(sl), x = k.x + ox, y = k.y + oy;
     rect(COLORS.night, x + 1, y, 6, 7);            // hat and head
@@ -2182,22 +2264,28 @@ function draw() {
   const shaking = cut && state.cut.t > CUT.shake && state.cut.t < CUT.shake + 1.2;
   if (shaking) { ctx.save(); ctx.translate(Math.round((Math.random() - 0.5) * 6), Math.round((Math.random() - 0.5) * 6)); }
   ctx.clearRect(-8, -8, CONFIG.W + 16, view.h + 16);
-  ctx.drawImage(bg, 0, 0);
+  state.camX = state.home ? Math.max(0, Math.min(CONFIG.W, state.px - CONFIG.W / 2)) : 0;
+  if (state.home) { ctx.save(); ctx.translate(-Math.round(state.camX), 0); ctx.drawImage(bg, 0, 0); ctx.drawImage(bg, CONFIG.W, 0); ctx.restore(); }
+  else ctx.drawImage(bg, 0, 0);
   drawFlakes();
   if (cut) { drawCutscene(); if (shaking) ctx.restore(); drawCelebration(); return; }
+  if (state.home) { ctx.save(); ctx.translate(-Math.round(state.camX), 0); }
   drawShadow();
   drawPrints();
+  drawHome();
   drawTreesAndBullies();
   drawPower();
   drawAvalanche();
-  if (!state.runner) drawFort();
+  if (!state.runner && !state.home) drawFort();
   for (const sl of slots()) drawKid(sl);
   for (const sl of slots()) drawArm(sl);
   for (const sl of slots()) drawCooldownRing(sl);
   for (const sl of slots()) drawAimLine(sl);
   for (const s of state.snowballs) drawSnowball(s);
   drawParticles();
+  if (state.home) ctx.restore();
   drawStick();
+  drawWinAlerts();
   if (state.mode === 'title') { drawLevelUi(); withInset(drawTitle); }
   else if (state.mode === 'levels') withInset(drawLevels);
   else if (state.mode === 'wavesmenu') withInset(drawWavesMenu);
