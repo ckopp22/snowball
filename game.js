@@ -564,8 +564,9 @@ function updateAim(p) {
   if (!state.aimValid) return;
   let a = Math.atan2(-dy, dx) / DEG;         // -180..180, positive = up
   if (state.runner) { state.aimAngle = a; return; }          // Runner: full 360
-  if (a < 0) a = a > -90 ? CONFIG.minAngle : CONFIG.maxAngle; // downward -> nearest edge
-  state.aimAngle = Math.min(CONFIG.maxAngle, Math.max(CONFIG.minAngle, a));
+  const lo = state.home ? 0 : CONFIG.minAngle, hi = state.home ? 180 : CONFIG.maxAngle;   // Home: straight left or right is allowed
+  if (a < 0) a = a > -90 ? lo : hi;                           // downward -> nearest edge
+  state.aimAngle = Math.min(hi, Math.max(lo, a));
 }
 
 function endAim() {
@@ -674,7 +675,7 @@ function updateFlakes(dt) {
 }
 
 const clampRx = x => Math.max(8, Math.min(CONFIG.W - 8, x)), clampRy = y => Math.max(24, Math.min(view.h - 10, y));
-const homeWallY = () => view.h - 62;
+const homeWallY = () => view.h - 90;   // the house sits above the bottom edge so thumbs have room
 function moveRunner(dt) {
   if (state.home) {
     if (state.stick) state.px = Math.max(10, Math.min(CONFIG.W * 2 - 10, state.px + Math.max(-1, Math.min(1, state.stick.dx)) * CONFIG.homeSpeed * dt));
@@ -1584,8 +1585,9 @@ function drawKid(slot) {
 function drawHome() {
   if (!state.home) return;
   const wy = homeWallY(), W2 = CONFIG.W * 2;
-  rect('#a9743a', 0, wy + 10, W2, view.h - wy);              // floor
-  for (let x = 0; x < W2; x += 12) rect('#96622c', x, wy + 10, 1, view.h - wy);
+  rect('#a9743a', 0, wy + 10, W2, 52);                       // floor
+  for (let x = 0; x < W2; x += 12) rect('#96622c', x, wy + 10, 1, 52);
+  rect('#4a2f17', 0, wy + 62, W2, 2);
   rect('#6b4423', 0, wy, W2, 10);                            // wall
   rect('#4a2f17', 0, wy + 8, W2, 2);
   for (const w of state.wins) {
