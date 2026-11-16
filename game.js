@@ -727,7 +727,7 @@ function update(dt) {
       puff(th.x, th.y);
       sfx('tree');
       state.snowballs.splice(i, 1);
-    } else if (s.x < -m || s.x > (state.home ? CONFIG.W * 2 : CONFIG.W) + m || s.y < -m || s.y > CONFIG.H + m) {
+    } else if (s.x < -m || s.x > (state.home ? CONFIG.W * 2 : CONFIG.W) + m || s.y < -m || s.y > view.h + m) {
       state.snowballs.splice(i, 1);     // miss: just leaves the screen
     }
   }
