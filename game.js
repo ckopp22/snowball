@@ -19,6 +19,8 @@ const CONFIG = {
   kidY: 275,
   coopKidXs: [79, 93],    // co-op: two boys side by side behind the fort (top-left x of each)
   coopKidY: 279,
+  runnerSpeed: 55,        // px/s the Runner moves at full joystick
+  stickRadius: 18,        // px the joystick knob can travel from where the thumb landed
   handDX: 11,             // where throws and the aim line start, relative to the kid's top-left
   handDY: 7,
   shoulderDX: 7,
@@ -225,8 +227,9 @@ const net = { role: 'solo', status: 'idle', error: '', code: '', peer: null, con
 const isCoop = () => net.role !== 'solo';
 const slots = () => (isCoop() ? [0, 1] : [0]);
 const pl = slot => (slot === net.localSlot ? state : state.remote);   // the local player's fields live on state itself
-const freshRemote = () => ({ aimAngle: 90, aimValid: false, aiming: false, cooldown: 0, swing: 0, gun: 0, gunTimer: 0 });
+const freshRemote = () => ({ aimAngle: 90, aimValid: false, aiming: false, cooldown: 0, swing: 0, gun: 0, gunTimer: 0, px: 90, py: 200, walkT: 0 });
 function kidPos(slot) {
+  if (state.runner) { const p = pl(slot); return { x: Math.round(p.px - 4), y: Math.round(p.py - 7) }; }
   return isCoop() ? { x: CONFIG.coopKidXs[slot], y: CONFIG.coopKidY } : { x: CONFIG.kidX, y: CONFIG.kidY };
 }
 function handPos(slot) {
@@ -517,6 +520,12 @@ const state = {
   anchor: { x: 0, y: 0 },
   aimAngle: 90,        // degrees, 90 = straight up
   aimValid: false,     // pull >= minPull
+  runner: false,       // Runner waves: the kid roams, no fort
+  wantRunner: false,   // what the menu picked (co-op host starts with it)
+  typeCoop: false,
+  walkT: 0,
+  px: 90, py: 200,     // runner position (centre of the kid)
+  stick: null,         // { id, ax, ay, dx, dy } floating joystick
 };
 
 for (let i = 0; i < CONFIG.flakes; i++) {
@@ -545,6 +554,7 @@ function updateAim(p) {
   state.aimValid = pull >= CONFIG.minPull;
   if (!state.aimValid) return;
   let a = Math.atan2(-dy, dx) / DEG;         // -180..180, positive = up
+  if (state.runner) { state.aimAngle = a; return; }          // Runner: full 360
   if (a < 0) a = a > -90 ? CONFIG.minAngle : CONFIG.maxAngle; // downward -> nearest edge
   state.aimAngle = Math.min(CONFIG.maxAngle, Math.max(CONFIG.minAngle, a));
 }
@@ -559,7 +569,7 @@ function throwSnowball(slot, auto, angle) {          // auto = machine-gun shot:
   const p = pl(slot);
   if (angle !== undefined) p.aimAngle = angle;
   if (net.role === 'guest') {                         // the host simulates the world: ask it to throw
-    netSend({ k: 't', a: r1(p.aimAngle) });
+    netSend({ k: 't', a: r1(p.aimAngle), x: r1(state.px), y: r1(state.py) });
     p.cooldown = CONFIG.throwCooldown;                // local feedback right away
     p.swing = CONFIG.armSwingTime;
     sfx('throw');
@@ -581,7 +591,7 @@ function sendAim(force) {
   const t = performance.now();
   if (!force && t - (net.lastAimSent || 0) < 60) return;
   net.lastAimSent = t;
-  netSend({ k: 'a', a: r1(state.aimAngle), v: state.aiming && state.aimValid ? 1 : 0 });
+  netSend({ k: 'a', a: r1(state.aimAngle), v: state.aiming && state.aimValid ? 1 : 0, x: r1(state.px), y: r1(state.py) });
 }
 
 function hitButton(p) {
@@ -593,7 +603,12 @@ window.addEventListener('pointerdown', e => {
   initAudio();                       // browsers only allow audio after a user gesture
   const b = hitButton(toCanvas(e));
   if (b) { b.onTap(); sfx('click'); return; }
-  if (state.mode !== 'playing' || state.aiming) return;
+  if (state.mode !== 'playing') return;
+  if (state.runner && toCanvas(e).x < CONFIG.W / 2) {          // left half: floating joystick
+    if (!state.stick) { const p = toCanvas(e); state.stick = { id: e.pointerId, ax: p.x, ay: p.y, dx: 0, dy: 0 }; }
+    return;
+  }
+  if (state.aiming) return;
   state.aiming = true;
   state.pointerId = e.pointerId;
   state.anchor = toCanvas(e);
@@ -602,6 +617,19 @@ window.addEventListener('pointerdown', e => {
 }, { passive: false });
 
 window.addEventListener('pointermove', e => {
+  const st = state.stick;
+  if (st && e.pointerId === st.id) {
+    e.preventDefault();
+    const p = toCanvas(e);
+    let dx = p.x - st.ax, dy = p.y - st.ay;
+    const d = Math.hypot(dx, dy);
+    if (d > CONFIG.stickRadius) {                              // drag the base along so the thumb never leaves it
+      st.ax += dx / d * (d - CONFIG.stickRadius); st.ay += dy / d * (d - CONFIG.stickRadius);
+      dx = p.x - st.ax; dy = p.y - st.ay;
+    }
+    st.dx = dx / CONFIG.stickRadius; st.dy = dy / CONFIG.stickRadius;
+    return;
+  }
   if (!state.aiming || e.pointerId !== state.pointerId) return;
   e.preventDefault();
   updateAim(toCanvas(e));
@@ -609,6 +637,7 @@ window.addEventListener('pointermove', e => {
 }, { passive: false });
 
 window.addEventListener('pointerup', e => {
+  if (state.stick && e.pointerId === state.stick.id) { state.stick = null; sendAim(true); return; }
   if (!state.aiming || e.pointerId !== state.pointerId) return;
   e.preventDefault();
   updateAim(toCanvas(e));
@@ -619,9 +648,10 @@ window.addEventListener('pointerup', e => {
 }, { passive: false });
 
 window.addEventListener('pointercancel', e => {
+  if (state.stick && e.pointerId === state.stick.id) state.stick = null;
   if (e.pointerId === state.pointerId) endAim();
 });
-window.addEventListener('blur', endAim);
+window.addEventListener('blur', () => { endAim(); state.stick = null; });
 
 state.shown = { ...state.progress };
 
@@ -634,6 +664,20 @@ function updateFlakes(dt) {
   }
 }
 
+const clampRx = x => Math.max(8, Math.min(CONFIG.W - 8, x)), clampRy = y => Math.max(24, Math.min(view.h - 10, y));
+function moveRunner(dt) {
+  if (!state.runner || !state.stick) return;
+  const st = state.stick, m = Math.hypot(st.dx, st.dy), k = m > 1 ? 1 / m : 1;
+  state.px = clampRx(state.px + st.dx * k * CONFIG.runnerSpeed * dt);
+  state.py = clampRy(state.py + st.dy * k * CONFIG.runnerSpeed * dt);
+}
+// Runner: the player (either one, in co-op) closest to a point
+function runTarget(x, y) {
+  let best = null, bd = Infinity;
+  for (const sl of slots()) { const p = pl(sl), d = Math.hypot(p.px - x, p.py - y); if (d < bd) { bd = d; best = p; } }
+  return best;
+}
+
 function update(dt) {
   updateFlakes(dt);
   state.time += dt;
@@ -641,7 +685,7 @@ function update(dt) {
 
   if (state.cooldown > 0) state.cooldown = Math.max(0, state.cooldown - dt);
   if (state.swing > 0) state.swing = Math.max(0, state.swing - dt);
-  for (const k of ['cooldown', 'swing']) if (state.remote[k] > 0) state.remote[k] = Math.max(0, state.remote[k] - dt);
+  for (const k of ['cooldown', 'swing', 'walkT']) if (state.remote[k] > 0) state.remote[k] = Math.max(0, state.remote[k] - dt);
 
   // Snowballs fly straight until they hit a bully or leave the screen
   const m = CONFIG.snowballRadius + 1;
@@ -666,6 +710,7 @@ function update(dt) {
     }
   }
 
+  moveRunner(dt);
   updateAvalanche(dt);
   updateBullies(dt);
   updateParticles(dt);
@@ -693,14 +738,18 @@ function resetGame() {
     power: null, avalanche: null, powerTimer: CONFIG.powerFirstDelay, gun: 0, gunTimer: 0, treesRemoved: 0, treeReturnTimer: 0, popup: null, remote: freshRemote(),
   });
   endAim();
+  state.stick = null; state.py = state.remote.py = 200;
+  state.px = CONFIG.W / 2 + (isCoop() ? (net.localSlot ? 14 : -14) : 0);
+  state.remote.px = CONFIG.W / 2 + (net.localSlot ? -14 : 14);
 }
 
-function setMode(m) { endAim(); state.mode = m; }
+function setMode(m) { endAim(); state.stick = null; if (MENU_MODES.includes(m)) state.runner = false; state.mode = m; }
 
 // DEBUG (easy to remove): open index.html?wave=8 to start at wave 8
 const DEBUG_START_WAVE = parseInt(new URLSearchParams(location.search).get('wave'), 10) || 1;
 
-function startGame() {
+function startGame(runner) {
+  if (typeof runner === 'boolean') state.runner = runner;
   resetGame();
   state.mode = 'playing';
   state.story = null;
@@ -764,6 +813,7 @@ function updateCutscene(dt) {
 }
 
 function startStory(n) {
+  state.runner = false;
   resetGame();
   state.mode = 'playing';
   const first = 2 * (n - 1) + 1;
@@ -820,14 +870,21 @@ function spawnBully() {
   } else type = pickType(state.wave);
   const T = CONFIG.bullyTypes[type];
   const m = CONFIG.bullyMargin + (T.swayAmp || 0);   // leave room for the sled's sway
-  const x0 = m + Math.random() * (CONFIG.W - 2 * m);
+  let x0 = m + Math.random() * (CONFIG.W - 2 * m), y0 = -T.halfH;
+  if (state.runner) {                                // Runner: enemies come in from any edge
+    const side = Math.floor(Math.random() * 4);
+    if (side === 0) { /* top */ }
+    else if (side === 1) { x0 = -T.halfH; y0 = rand(20, view.h); }
+    else if (side === 2) { x0 = CONFIG.W + T.halfH; y0 = rand(20, view.h); }
+    else y0 = view.h + T.halfH;
+  }
   state.bullies.push({
     id: ++bullyId,
     type,
     vx: 0, vy: 0,                                    // velocity, sent to the co-op guest for smooth motion
     x: x0, x0,                                       // x0 = centre column (sway is around it)
-    y: -T.halfH,
-    ang: Math.PI / 2,                                // heading (screen coords): straight down
+    y: y0,
+    ang: state.runner ? (t => Math.atan2(t.py - y0, t.px - x0))(runTarget(x0, y0)) : Math.PI / 2,                                // heading (screen coords): straight down
     speed: waveSpeed(state.wave) * T.speedMul,
     hp: T.hp,
     state: 'walking',      // walking | falling | fading
@@ -884,7 +941,7 @@ function firstBullyHit(ax, ay, bx, by) {
 
 // ---- Power-ups ----
 const rand = (a, b) => a + Math.random() * (b - a);
-const MENU_MODES = ['title', 'levels', 'wavesmenu', 'coopmenu', 'coophost', 'coopjoin'];
+const MENU_MODES = ['title', 'levels', 'wavesmenu', 'wavetype', 'coopmenu', 'coophost', 'coopjoin'];
 
 // Segment-vs-circle; returns t (0..1 along the snowball's path this frame) or null
 function firstPowerHit(ax, ay, bx, by) {
@@ -1039,7 +1096,8 @@ function updateBullies(dt) {
       b.age += dt;
       const prevX = b.x, prevY = b.y;
       // Walk straight down; below turnY, steer smoothly toward the kid (fort centre)
-      let want = b.y >= CONFIG.turnY ? Math.atan2(CONFIG.fortCY - b.y, CONFIG.fortCX - b.x0) : Math.PI / 2;
+      const rt = state.runner ? runTarget(b.x, b.y) : null;
+      let want = rt ? Math.atan2(rt.py - b.y, rt.px - b.x0) : b.y >= CONFIG.turnY ? Math.atan2(CONFIG.fortCY - b.y, CONFIG.fortCX - b.x0) : Math.PI / 2;
       want = avoidTrees(b, T, want);              // walk around trees
       const da = Math.atan2(Math.sin(want - b.ang), Math.cos(want - b.ang));   // wrapped to -PI..PI
       const maxTurn = CONFIG.turnRate * dt;
@@ -1047,7 +1105,7 @@ function updateBullies(dt) {
       b.x0 += Math.cos(b.ang) * b.speed * dt;     // x0 = path position; the Sled Kid's sway is added on top
       b.y += Math.sin(b.ang) * b.speed * dt;
       let sway = 0;
-      if (T.swayAmp) {
+      if (T.swayAmp && !state.runner) {
         const k = Math.max(0, Math.min(1, 1 - (b.y - CONFIG.turnY) / CONFIG.turnSwayFade));
         sway = Math.sin(b.age * T.swayFreq * Math.PI * 2 + b.ph) * T.swayAmp * k;
       }
@@ -1063,7 +1121,7 @@ function updateBullies(dt) {
       b.vx = dt > 0 ? (b.x - prevX) / dt : 0;
       b.vy = dt > 0 ? (b.y - prevY) / dt : 0;
       footstep(b, T, prevX, prevY);
-      if (b.y >= CONFIG.H || Math.hypot(b.x - CONFIG.fortCX, b.y - CONFIG.fortCY) <= CONFIG.fortOuter + T.radius) {  // touches the fort
+      if (rt ? Math.hypot(b.x - rt.px, b.y - rt.py) <= 6 + T.radius : (b.y >= CONFIG.H || Math.hypot(b.x - CONFIG.fortCX, b.y - CONFIG.fortCY) <= CONFIG.fortOuter + T.radius)) {  // touches the fort
         state.bullies.splice(i, 1);
         damageFort(T.fortDamage);
       }
@@ -1239,7 +1297,7 @@ function resetNet() {
 
 function leaveCoop() { resetNet(); state.entry = ''; resetGame(); setMode('title'); }
 function backToCoopMenu() { resetNet(); state.entry = ''; setMode('coopmenu'); }
-function openCoopMenu() { net.status = 'idle'; net.error = ''; setMode('coopmenu'); }
+function openCoopMenu() { state.runner = false; net.status = 'idle'; net.error = ''; setMode('coopmenu'); }
 
 function netFail(msg) { net.status = 'error'; net.error = msg; }
 
@@ -1263,7 +1321,7 @@ function hostGame(tries) {
     net.conn = conn;
     conn.on('open', () => {
       Object.assign(net, { role: 'host', localSlot: 0, lost: false, lastRx: performance.now(), evq: [], acc: 0 });
-      startGame();
+      startGame(state.wantRunner);
     });
     conn.on('data', hostOnData);
     conn.on('close', () => { if (net.conn === conn) net.lost = true; });
@@ -1308,18 +1366,27 @@ function hostOnData(d) {
   net.lastRx = performance.now(); net.lost = false;
   const r = state.remote;
   if (d.k === 'a' && Number.isFinite(d.a)) {
-    r.aimAngle = Math.min(CONFIG.maxAngle, Math.max(CONFIG.minAngle, d.a));
+    r.aimAngle = state.runner ? d.a : Math.min(CONFIG.maxAngle, Math.max(CONFIG.minAngle, d.a));
     r.aimValid = r.aiming = !!d.v;
+    setRemotePos(d);
   } else if (d.k === 't' && Number.isFinite(d.a) && state.mode === 'playing' && r.cooldown <= 0.1 && r.gun <= 0) {
-    throwSnowball(1, false, Math.min(CONFIG.maxAngle, Math.max(CONFIG.minAngle, d.a)));
+    setRemotePos(d);
+    throwSnowball(1, false, state.runner ? d.a : Math.min(CONFIG.maxAngle, Math.max(CONFIG.minAngle, d.a)));
   }
+}
+
+function setRemotePos(d) {
+  if (!state.runner || !Number.isFinite(d.x) || !Number.isFinite(d.y)) return;
+  const r = state.remote, x = clampRx(d.x), y = clampRy(d.y);
+  if (Math.hypot(x - r.px, y - r.py) > 0.05) r.walkT = 0.15;
+  r.px = x; r.py = y;
 }
 
 // Host -> guest: everything the guest needs to draw the world
 function buildSnapshot() {
   const ev = net.evq; net.evq = [];
   return {
-    k: 's', m: state.mode, sc: state.score, w: state.wave, h: state.health,
+    k: 's', rn: state.runner ? 1 : 0, hp: [r1(state.px), r1(state.py)], m: state.mode, sc: state.score, w: state.wave, h: state.health,
     fl: r1(state.flash * 10) / 10, bn: r1(state.banner), tm: r1(state.time), tr: state.treesRemoved,
     pu: state.popup ? { s: state.popup.text, t: r1(state.popup.t) } : null,
     pw: state.power ? [r1(state.power.x), r1(state.power.baseY), r1(state.power.age)] : null,
@@ -1341,6 +1408,7 @@ function guestOnData(d) {
 
 function applySnapshot(d) {
   const prev = state.mode;
+  state.runner = !!d.rn;
   if (d.m === 'playing' && prev !== 'playing') { resetGame(); }        // first snapshot, or the host pressed Play Again
   if (d.m === 'gameover' && prev === 'playing') {
     endAim();
@@ -1354,6 +1422,11 @@ function applySnapshot(d) {
   state.power = d.pw ? { x: d.pw[0], baseY: d.pw[1], y: d.pw[1] + Math.sin(d.pw[2] * 2.5) * 3, age: d.pw[2] } : null;
   state.gun = d.g[net.localSlot];
   const r = state.remote;                                              // the host, from the guest's point of view
+  if (d.hp) {
+    if (r.tx === undefined) { r.px = d.hp[0]; r.py = d.hp[1]; }
+    else if (Math.hypot(d.hp[0] - r.tx, d.hp[1] - r.ty) > 0.05) r.walkT = 0.15;
+    r.tx = d.hp[0]; r.ty = d.hp[1];
+  }
   r.gun = d.g[1 - net.localSlot]; r.aimAngle = d.ha[0]; r.aiming = r.aimValid = !!d.ha[1]; r.swing = d.ha[2];
 
   const old = new Map(state.bullies.map(b => [b.id, b]));              // keep local footprint state per bully
@@ -1375,7 +1448,14 @@ function applySnapshot(d) {
 function updateGuest(dt) {
   updateFlakes(dt);
   state.time += dt;
+  if (state.mode === 'playing' && state.runner) {
+    moveRunner(dt);
+    if (state.stick) sendAim();
+    const r = state.remote;
+    if (r.tx !== undefined) { const k = Math.min(1, dt * 15); r.px += (r.tx - r.px) * k; r.py += (r.ty - r.py) * k; }
+  }
   for (const p of [state, state.remote]) {
+    if (p.walkT > 0) p.walkT = Math.max(0, p.walkT - dt);
     if (p.cooldown > 0) p.cooldown = Math.max(0, p.cooldown - dt);
     if (p.swing > 0) p.swing = Math.max(0, p.swing - dt);
   }
@@ -1438,7 +1518,23 @@ function drawFlakes() {
 // Breathing: every ~3 s the upper body lifts 1 px and settles back (legs and throwing hand stay put); the two boys are out of step
 const breath = slot => (Math.sin(performance.now() / 1000 * 2.2 + slot * 1.3) > 0 ? 1 : 0);
 
-function drawKid(slot) { const { x, y } = kidPos(slot); drawKidAt(x, y, slot, breath(slot), 0); }
+function drawKid(slot) {
+  const { x, y } = kidPos(slot);
+  const p = pl(slot), walking = state.runner && (p === state ? state.stick && (state.stick.dx || state.stick.dy) : p.walkT > 0);
+  drawKidAt(x, y, slot, breath(slot), walking ? 1 + (Math.floor(state.time * 8) % 2) : 0);
+}
+
+function drawStick() {
+  const st = state.stick;
+  if (!st || !state.runner || state.mode !== 'playing') return;
+  const R = CONFIG.stickRadius;
+  ctx.globalAlpha = 0.35;
+  for (let i = 0; i < 24; i++) { const a = i / 24 * Math.PI * 2; rect(COLORS.night, st.ax + Math.cos(a) * R - 1, st.ay + Math.sin(a) * R - 1, 2, 2); }
+  ctx.globalAlpha = 0.6;
+  const kx = Math.round(st.ax + st.dx * R), ky = Math.round(st.ay + st.dy * R);
+  rect(COLORS.night, kx - 4, ky - 4, 8, 8); rect(COLORS.ice, kx - 3, ky - 3, 6, 6);
+  ctx.globalAlpha = 1;
+}
 
 // step: 0 = standing, 1 / 2 = the two walking poses (legs alternate)
 function drawKidAt(x, y, slot, b, step) {
@@ -1897,9 +1993,18 @@ function drawWavesMenu() {
   drawBestLine('BEST: ' + state.best, 88, 0);
   drawBestLine('CO-OP BEST: ' + state.coopBest, 102, 0.37);
   const h = btnH();
-  button('SOLO', CONFIG.W / 2, 140, 100, 1, startGame);
-  button('CO-OP', CONFIG.W / 2, 140 + h + 8, 100, 1, openCoopMenu, COLORS.ice, 1);
+  button('SOLO', CONFIG.W / 2, 140, 100, 1, () => { state.typeCoop = false; setMode('wavetype'); });
+  button('CO-OP', CONFIG.W / 2, 140 + h + 8, 100, 1, () => { state.typeCoop = true; setMode('wavetype'); }, COLORS.ice, 1);
   button('BACK', CONFIG.W / 2, 140 + 2 * (h + 8), 76, 1, () => setMode('title'), COLORS.shadow, 1);
+}
+
+function chooseWaveType(r) { state.wantRunner = r; if (state.typeCoop) openCoopMenu(); else startGame(r); }
+function drawWaveType() {
+  drawText5('WAVES', CONFIG.W / 2, 50, 3, COLORS.coatBlue, 'center', COLORS.night);
+  const h = btnH();
+  button('SNOW FORT', CONFIG.W / 2, 110, 110, 1, () => chooseWaveType(false));
+  button('RUNNER', CONFIG.W / 2, 110 + h + 8, 110, 1, () => chooseWaveType(true), COLORS.hatGreen, 1);
+  button('BACK', CONFIG.W / 2, 110 + 2 * (h + 8), 76, 1, () => setMode('wavesmenu'), COLORS.shadow, 1);
 }
 
 function drawLevels() {
@@ -1907,7 +2012,16 @@ function drawLevels() {
   const h = btnH();
   for (let n = 1; n <= CONFIG.storyLevels; n++) {
     const col = (n - 1) % 2, row = Math.floor((n - 1) / 2), ok = n <= state.storyUnlocked;
-    button(String(n), CONFIG.W / 2 + (col ? 34 : -34), 70 + row * (h + 8), 56, 1, ok ? (n === 1 ? startCutscene : () => startStory(n)) : () => {}, ok ? COLORS.hatGreen : COLORS.shadow, 1);
+    const cx = CONFIG.W / 2 + (col ? 34 : -34), cy = 70 + row * (h + 8);
+    const next = n === state.storyUnlocked + 1;
+    if (!ok && !next) ctx.globalAlpha = 0.55;
+    button(String(n), cx, cy, 56, 1, ok ? (n === 1 ? startCutscene : () => startStory(n)) : () => {}, ok || next ? COLORS.hatGreen : COLORS.shadow, 1);
+    ctx.globalAlpha = 1;
+    if (next) {
+      const x = Math.round(cx - 28) - 3, y = Math.round(cy - h / 2) - 3, w = 62, bh = h + 6;
+      rect(COLORS.gold, x, y, w, 2); rect(COLORS.gold, x, y + bh - 2, w, 2);
+      rect(COLORS.gold, x, y, 2, bh); rect(COLORS.gold, x + w - 2, y, 2, bh);
+    }
   }
   button('BACK', CONFIG.W / 2, 70 + 5 * (h + 8) + 6, 76, 1, () => setMode('title'), COLORS.ice, 1);
 }
@@ -1999,7 +2113,7 @@ function drawGameOver() {
 function drawShadow() {
   const ox = CONFIG.shadowOffX, oy = CONFIG.shadowOffY;
   ctx.globalAlpha = CONFIG.shadowAlpha;
-  ctx.drawImage(fortShadow, ox, oy);
+  if (!state.runner) ctx.drawImage(fortShadow, ox, oy);
   for (const sl of slots()) {
     const k = kidPos(sl), x = k.x + ox, y = k.y + oy;
     rect(COLORS.night, x + 1, y, 6, 7);            // hat and head
@@ -2076,16 +2190,18 @@ function draw() {
   drawTreesAndBullies();
   drawPower();
   drawAvalanche();
-  drawFort();
+  if (!state.runner) drawFort();
   for (const sl of slots()) drawKid(sl);
   for (const sl of slots()) drawArm(sl);
   for (const sl of slots()) drawCooldownRing(sl);
   for (const sl of slots()) drawAimLine(sl);
   for (const s of state.snowballs) drawSnowball(s);
   drawParticles();
+  drawStick();
   if (state.mode === 'title') { drawLevelUi(); withInset(drawTitle); }
   else if (state.mode === 'levels') withInset(drawLevels);
   else if (state.mode === 'wavesmenu') withInset(drawWavesMenu);
+  else if (state.mode === 'wavetype') withInset(drawWaveType);
   else if (state.mode === 'coopmenu') withInset(drawCoopMenu);
   else if (state.mode === 'coophost') withInset(drawCoopHost);
   else if (state.mode === 'coopjoin') withInset(drawCoopJoin);
