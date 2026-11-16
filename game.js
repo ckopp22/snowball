@@ -24,7 +24,8 @@ const CONFIG = {
   homeWinHp: 10,          // window boards; enemies chew them down, the boy standing at the window repairs them
   homeAttack: 0.5,        // window damage per second = bully fortDamage x this
   homeRepair: 3,          // window hp per second while the boy stands at it
-  homeRepairDist: 16,
+  homeRepairDist: 20,
+  homeWinHalf: 22,        // half the window opening width
   stickRadius: 18,        // px the joystick knob can travel from where the thumb landed
   handDX: 11,             // where throws and the aim line start, relative to the kid's top-left
   handDY: 7,
@@ -712,7 +713,7 @@ function update(dt) {
       const wy = homeWallY() + 5;
       if (py > wy && s.y <= wy) {
         const xc = px + (s.x - px) * (py - wy) / (py - s.y);
-        if (!state.wins.some(w => Math.abs(xc - w.x) <= 13)) { puff(xc, wy); state.snowballs.splice(i, 1); continue; }
+        if (!state.wins.some(w => Math.abs(xc - w.x) <= CONFIG.homeWinHalf - 1)) { puff(xc, wy); state.snowballs.splice(i, 1); continue; }
       }
     }
     const bh = firstBullyHit(px, py, s.x, s.y), th = firstTreeHit(px, py, s.x, s.y), ph = firstPowerHit(px, py, s.x, s.y);
@@ -763,7 +764,7 @@ function resetGame() {
   state.stick = null; state.py = state.remote.py = 200;
   state.px = CONFIG.W / 2 + (isCoop() ? (net.localSlot ? 14 : -14) : 0);
   state.remote.px = CONFIG.W / 2 + (net.localSlot ? -14 : 14);
-  if (state.home) { state.px = CONFIG.W; state.py = homeWallY() + 34; }
+  if (state.home) { state.px = CONFIG.W; state.py = homeWallY() + 18; }
 }
 
 function setMode(m) { endAim(); state.stick = null; if (MENU_MODES.includes(m)) state.runner = state.home = false; state.mode = m; }
@@ -1588,10 +1589,11 @@ function drawHome() {
   rect('#6b4423', 0, wy, W2, 10);                            // wall
   rect('#4a2f17', 0, wy + 8, W2, 2);
   for (const w of state.wins) {
-    rect(COLORS.night, w.x - 15, wy - 1, 30, 11);            // frame
-    rect(COLORS.ice, w.x - 13, wy, 26, 9);                   // opening
+    const hw = CONFIG.homeWinHalf;
+    rect(COLORS.night, w.x - hw - 2, wy - 1, hw * 2 + 4, 11);   // frame
+    rect(COLORS.ice, w.x - hw, wy, hw * 2, 9);                  // opening
     const n = Math.ceil(w.hp / CONFIG.homeWinHp * 4 - 0.001);
-    for (let k = 0; k < n; k++) { rect('#c58b4a', w.x - 13, wy + k * 2 + 1, 26, 2); rect('#8a5a2b', w.x - 13, wy + k * 2 + 2, 26, 1); }
+    for (let k = 0; k < n; k++) { rect('#c58b4a', w.x - hw, wy + k * 2 + 1, hw * 2, 2); rect('#8a5a2b', w.x - hw, wy + k * 2 + 2, hw * 2, 1); }
   }
 }
 
