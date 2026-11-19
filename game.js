@@ -1780,8 +1780,7 @@ function drawDoor() {
 function perkIcon(id, cx, cy, k) {
   const r = (c, x, y, w, h) => rect(c, Math.round(cx + x * k), Math.round(cy + y * k), w * k, h * k);
   if (id === 'health') {                                    // bright green medical cross (outlined and longer when drawn bigger)
-    if (k >= 2) { r('#2ee05a', -1, -2, 3, 5); r('#2ee05a', -2, -1, 5, 3); }
-    else { r('#2ee05a', 0, -2, 1, 5); r('#2ee05a', -2, 0, 5, 1); }      // thin cross on the small plaque so it doesn't blur into a blob
+    r('#2ee05a', 0, -2, 1, 5); r('#2ee05a', -2, 0, 5, 1);        // thin cross at every size, so it matches the plaque
   }
   else if (id === 'avalanche') { r(COLORS.snow, 0, -2, 1, 1); r(COLORS.snow, -1, -1, 3, 1); r(COLORS.ice, -2, 0, 5, 3); }
   else if (id === 'gun') { r(COLORS.ice, -2, -1, 5, 2); r(COLORS.ice, 2, -1, 2, 1); r(COLORS.ice, -2, 1, 2, 2); }
