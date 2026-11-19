@@ -539,6 +539,9 @@ const state = {
   typeCoop: false,
   home: false,         // Home waves: the boy runs inside a house and throws out of its windows
   wins: [],            // home windows { x, hp }
+  door: { x: 180, open: false },   // home door (perk-unlocked)
+  perks: {},           // owned home perks { id: true }
+  ask: null,           // perk id being confirmed
   camX: 0,
   walkT: 0,
   hurt: 0,             // timer: kid flashes red and bounces when the fort / player is hit
@@ -572,7 +575,7 @@ function updateAim(p) {
   state.aimValid = pull >= CONFIG.minPull;
   if (!state.aimValid) return;
   let a = Math.atan2(-dy, dx) / DEG;         // -180..180, positive = up
-  if (state.runner) { state.aimAngle = a; return; }          // Runner: full 360
+  if (state.runner || (state.home && state.py < homeWallY() + 5)) { state.aimAngle = a; return; }   // Runner, or Home outside: full 360          // Runner: full 360
   const lo = state.home ? 0 : CONFIG.minAngle, hi = state.home ? 180 : CONFIG.maxAngle;   // Home: straight left or right is allowed
   if (a < 0) a = a > -90 ? lo : hi;                           // downward -> nearest edge
   state.aimAngle = Math.min(hi, Math.max(lo, a));
@@ -684,13 +687,71 @@ function updateFlakes(dt) {
 }
 
 const clampRx = x => Math.max(8, Math.min(CONFIG.W - 8, x)), clampRy = y => Math.max(24, Math.min(view.h - 10, y));
+// Home perks: plaques on the outer wall (two left of the door, two right); hit one with a snowball to buy it
+const HOME_PERKS = [
+  { id: 'health', name: 'HEALTH', x: 120, cost: 150 },
+  { id: 'avalanche', name: 'AVALANCHE', x: 150, cost: 300 },
+  { id: 'gun', name: 'MACHINE GUN', x: 210, cost: 200 },
+  { id: 'door', name: 'DOOR', x: 240, cost: 100 },
+];
+function askPerk(id) { state.ask = id; setMode('perkconfirm'); }
+function closePerk() { state.ask = null; state.mode = 'playing'; }
+function buyPerk(p) {
+  if (state.perks[p.id] || state.score < p.cost) return;
+  state.score -= p.cost;
+  state.perks[p.id] = true;
+  sfx('power');
+  state.popup = { text: p.name + ' BOUGHT!', t: 1.4 };
+}
+function usePerk(id) {
+  if (state.mode !== 'playing' || !state.perks[id]) return;
+  const wy = homeWallY(), d = state.door;
+  if (id === 'health') {
+    if (state.health >= CONFIG.fortHealth) { state.popup = { text: 'HEALTH FULL', t: 1.2 }; return; }
+    state.health = CONFIG.fortHealth;
+    puff(state.px, state.py);
+    state.popup = { text: 'HEALED!', t: 1.4 };
+  } else if (id === 'avalanche') {
+    state.avalanche = { y: -CONFIG.avalancheBand };
+    sfx('avalanche');
+    state.popup = { text: 'AVALANCHE!', t: 1.4 };
+  } else if (id === 'gun') {
+    state.gun = CONFIG.gunTime; state.gunTimer = 0;
+    state.popup = { text: 'MACHINE GUN!', t: 1.4 };
+  } else if (id === 'door') {
+    if (d.open) {                                              // closing: the boy must be safely inside, clear of the doorway
+      if (state.py < wy + 14 || (Math.abs(state.px - d.x) <= 14 && state.py < wy + 30)) { state.popup = { text: 'DOOR BLOCKED', t: 1.2 }; return; }
+      d.open = false; state.py = wy + 18;
+      state.popup = { text: 'DOOR CLOSED', t: 1.4 };
+    } else { d.open = true; state.popup = { text: 'DOOR OPEN', t: 1.4 }; }
+  }
+  state.perks[id] = false;
+  sfx('power');
+}
 const windowAttackers = w => state.bullies.filter(b => b.state === 'walking' && b.phase === 1 && state.wins[b.win] === w).length;
+const homeWalkable = (x, y) => {            // where the boy may stand (door open)
+  const wy = homeWallY(), L = CONFIG.homeL + 18, R = CONFIG.homeR - 18;
+  if (y >= wy + 18 && y <= wy + 54) return x >= L && x <= R;                                   // floor
+  if (Math.abs(x - state.door.x) <= 5 && y >= wy - 8 && y <= wy + 54) return true;             // doorway
+  return y >= 24 && y <= wy - 8 && x >= 8 && x <= CONFIG.W * 2 - 8;                            // yard
+};
 const homeWallY = () => view.h - 130;   // the house sits above the bottom edge so thumbs have room
 function moveRunner(dt) {
   if (state.home) {
-    if (state.stick) state.px = Math.max(CONFIG.homeL + 18, Math.min(CONFIG.homeR - 18, state.px + Math.max(-1, Math.min(1, state.stick.dx)) * CONFIG.homeSpeed * dt));
+    const st = state.stick, wy = homeWallY();
+    if (state.door.open) {                                      // door open: move freely like Runner, through the doorway
+      if (st) {
+        const dx = Math.max(-1, Math.min(1, st.dx)), dy = Math.max(-1, Math.min(1, st.dy)), m = Math.hypot(dx, dy), k = m > 1 ? 1 / m : 1;
+        const nx = state.px + dx * k * CONFIG.homeSpeed * dt, ny = state.py + dy * k * CONFIG.homeSpeed * dt;
+        if (homeWalkable(nx, state.py)) state.px = nx;
+        if (homeWalkable(state.px, ny)) state.py = ny;
+      }
+    } else {
+      if (st) state.px = Math.max(CONFIG.homeL + 18, Math.min(CONFIG.homeR - 18, state.px + Math.max(-1, Math.min(1, st.dx)) * CONFIG.homeSpeed * dt));
+      state.py = wy + 18;
+    }
     let fixing = null;
-    for (const w of state.wins) if (Math.abs(state.px - w.x) <= CONFIG.homeRepairDist) {
+    for (const w of state.wins) if (state.py > wy + 10 && Math.abs(state.px - w.x) <= CONFIG.homeRepairDist) {
       const n = windowAttackers(w);
       if (n === 1) continue;                                   // one enemy vs the boy: stalemate, nothing happens
       if (w.hp < CONFIG.homeWinHp || n > 1) fixing = w;
@@ -728,11 +789,14 @@ function update(dt) {
     const px = s.x, py = s.y;
     s.x += s.vx * dt;
     s.y += s.vy * dt;
-    if (state.home) {                   // the house wall stops snowballs unless they fly through a window
+    if (state.home) {                   // the wall stops snowballs unless they fly through a window or the open door; plaques are perks
       const wy = homeWallY() + 5;
-      if (py > wy && s.y <= wy) {
+      if ((py - wy) * (s.y - wy) < 0) {
         const xc = px + (s.x - px) * (py - wy) / (py - s.y);
-        if (!state.wins.some(w => Math.abs(xc - w.x) <= CONFIG.homeWinHalf - 1)) { puff(xc, wy); state.snowballs.splice(i, 1); continue; }
+        const pk = HOME_PERKS.find(p => Math.abs(xc - p.x) <= 9);
+        if (pk) { puff(xc, wy); sfx('clank'); state.snowballs.splice(i, 1); askPerk(pk.id); continue; }
+        const gap = state.wins.some(w => Math.abs(xc - w.x) <= CONFIG.homeWinHalf - 1) || (state.door.open && Math.abs(xc - state.door.x) <= 7);
+        if (!gap) { puff(xc, wy); state.snowballs.splice(i, 1); continue; }
       }
     }
     if (state.home && s.y > homeWallY() + 5 && (s.x < CONFIG.homeL + 12 || s.x > CONFIG.homeR - 12)) {   // end walls
@@ -783,6 +847,7 @@ function resetGame() {
   });
   endAim();
   state.wins = [60, 300].map(x => ({ x, hp: CONFIG.homeWinHp }));
+  state.door = { x: CONFIG.W, open: false }; state.perks = {}; state.ask = null;
   state.stick = null; state.py = state.remote.py = 200;
   state.px = CONFIG.W / 2 + (isCoop() ? (net.localSlot ? 14 : -14) : 0);
   state.remote.px = CONFIG.W / 2 + (net.localSlot ? -14 : 14);
@@ -927,7 +992,7 @@ function spawnBully() {
   }
   state.bullies.push({
     id: ++bullyId,
-    type, phase: 0, win: Math.random() < 0.5 ? 0 : 1,   // Home: 0 walk to the window, 1 chew it, 2 climb in, 3 chase the boy
+    type, phase: state.home && state.py < homeWallY() + 5 ? 4 : 0, win: state.home ? homeEntry() : 0,   // Home: 0 walk to the window/door, 1 chew it, 2 climb in, 3 chase the boy inside, 4 chase him outside, 5 leave through the door
 
     vx: 0, vy: 0,                                    // velocity, sent to the co-op guest for smooth motion
     x: x0, x0,                                       // x0 = centre column (sway is around it)
@@ -1137,12 +1202,20 @@ function puff(x, y, cols) {            // cols: optional [colorA, colorB] instea
   }
 }
 
+const homeEntry = () => (state.door.open && Math.random() < 0.34 ? 2 : (Math.random() < 0.5 ? 0 : 1));   // 0 / 1 windows, 2 door
 function updateHomeBully(b, T, dt) {          // true when it reaches the boy
   b.age += dt;
-  const wy = homeWallY(), win = state.wins[b.win], px = b.x, py = b.y;
+  const wy = homeWallY(), px = b.x, py = b.y, door = state.door, boyOut = state.py < wy + 5;
+  if (boyOut && (b.phase === 0 || b.phase === 1)) b.phase = 4;                                  // the boy went outside: chase him there
+  else if (!boyOut && b.phase === 4) { b.phase = 0; b.win = homeEntry(); }                        // he came back in: find a way in
+  else if (boyOut && b.phase === 3) b.phase = door.open ? 5 : 3;                                  // follow him out of the house
+  else if (!boyOut && b.phase === 5) b.phase = 3;
+  if (b.phase === 5 && !door.open) b.phase = 3;
+  if (b.win === 2 && !door.open && b.phase <= 1) { b.win = Math.random() < 0.5 ? 0 : 1; b.phase = 0; }   // door got closed
+  const win = b.win === 2 ? door : state.wins[b.win];
   let tx = state.px + (b.ph - 5) * 2.5, ty = state.py;   // each chaser aims a little to one side so they spread out
   if (b.phase === 1) {
-    if (Math.abs(state.px - win.x) <= CONFIG.homeRepairDist && windowAttackers(win) === 1) { b.vx = b.vy = 0; return false; }   // stalemate with the boy
+    if (state.py > wy + 10 && Math.abs(state.px - win.x) <= CONFIG.homeRepairDist && windowAttackers(win) === 1) { b.vx = b.vy = 0; return false; }   // stalemate with the boy
     win.hp = Math.max(0, win.hp - T.fortDamage * CONFIG.homeAttack * dt);
     if ((b.chewT = (b.chewT || 0) - dt) <= 0) {
       b.chewT = 0.6 + Math.random() * 0.4;
@@ -1155,10 +1228,14 @@ function updateHomeBully(b, T, dt) {          // true when it reaches the boy
   }
   if (b.phase === 0) { tx = win.x; ty = wy - T.halfH; }
   else if (b.phase === 2) { tx = win.x; ty = wy + 16; }
+  else if (b.phase === 5) {
+    if (b.y > wy + 12 && Math.abs(b.x - door.x) > 3) { tx = door.x; ty = wy + 16; }
+    else { tx = door.x; ty = wy - T.halfH - 4; }
+  }
   const dx = tx - b.x, dy = ty - b.y, d = Math.hypot(dx, dy), step = b.speed * dt;
   if (d > 0.01) b.ang = Math.atan2(dy, dx);
   if (d <= step) { b.x = tx; b.y = ty; } else { b.x += dx / d * step; b.y += dy / d * step; }
-  if (b.phase >= 3) {                                       // keep enemies inside the house from stacking on each other
+  if (b.phase === 3 || b.phase === 4) {                     // keep enemies from stacking on each other
     for (const o of state.bullies) {
       if (o === b || o.state !== 'walking' || !(o.phase >= 2)) continue;
       let ox = b.x - o.x, oy = b.y - o.y, od = Math.hypot(ox, oy);
@@ -1168,16 +1245,20 @@ function updateHomeBully(b, T, dt) {          // true when it reaches the boy
       const push = (R - od) / 2;
       b.x += ox / od * push; b.y += oy / od * push;
     }
-    b.x = Math.max(CONFIG.homeL + 16, Math.min(CONFIG.homeR - 16, b.x));
-    b.y = Math.max(wy + 12, Math.min(wy + 56, b.y));
+    if (b.phase === 3) {
+      b.x = Math.max(CONFIG.homeL + 16, Math.min(CONFIG.homeR - 16, b.x));
+      b.y = Math.max(wy + 12, Math.min(wy + 56, b.y));
+    } else {
+      b.x = Math.max(8, Math.min(CONFIG.W * 2 - 8, b.x));
+      b.y = Math.min(wy - T.halfH, b.y);
+    }
   }
   b.x0 = b.x;
   if (d <= step) {
-    if (b.phase === 0) b.phase = win.hp > 0 ? 1 : 2;
-    else if (b.phase === 2) {
-      b.phase = 3;
-    }
+    if (b.phase === 0) b.phase = b.win === 2 ? 2 : (win.hp > 0 ? 1 : 2);
+    else if (b.phase === 2) b.phase = boyOut && door.open ? 5 : 3;
   }
+  if (b.phase === 5 && b.y < wy - 1) b.phase = 4;
   b.vx = dt > 0 ? (b.x - px) / dt : 0; b.vy = dt > 0 ? (b.y - py) / dt : 0;
   footstep(b, T, px, py);
   return b.phase >= 2 && Math.hypot(b.x - state.px, b.y - state.py) <= 6 + T.radius;
@@ -1252,7 +1333,7 @@ function avalancheFx(dt) {
   const av = state.avalanche;
   for (let i = 0, n = Math.ceil(dt * 120); i < n; i++) {
     state.particles.push({
-      x: Math.random() * CONFIG.W, y: av.y + rand(-8, 2), vx: rand(-14, 14), vy: rand(-30, 20),
+      x: Math.random() * CONFIG.W * (state.home ? 2 : 1), y: av.y + rand(-8, 2), vx: rand(-14, 14), vy: rand(-30, 20),
       life: rand(0.3, 0.6), c: Math.random() < 0.5 ? COLORS.ice : COLORS.shadow,
     });
   }
@@ -1622,7 +1703,7 @@ const breath = slot => (Math.sin(performance.now() / 1000 * 2.2 + slot * 1.3) > 
 
 function drawKid(slot) {
   const { x, y } = kidPos(slot);
-  const p = pl(slot), walking = (state.runner || state.home) && (p === state ? state.stick && (state.home ? Math.abs(state.stick.dx) > 0.1 : (state.stick.dx || state.stick.dy)) : p.walkT > 0);
+  const p = pl(slot), walking = (state.runner || state.home) && (p === state ? state.stick && (state.home && !state.door.open ? Math.abs(state.stick.dx) > 0.1 : (state.stick.dx || state.stick.dy)) : p.walkT > 0);
   drawKidAt(x, y, slot, breath(slot), walking ? 1 + (Math.floor(state.time * 8) % 2) : 0);
   if (state.hurt > 0 && Math.floor(state.hurt * 20) % 2 === 0) {      // red flash, blinking
     ctx.globalAlpha = 0.65;
@@ -1650,6 +1731,7 @@ function drawHome() {
     for (let k = 0; k < n; k++) { rect('#c58b4a', w.x - hw, wy + k * 2 + 1, hw * 2, 2); rect('#8a5a2b', w.x - hw, wy + k * 2 + 2, hw * 2, 1); }
   }
   drawDoor();
+  drawPerkPlaques();
   drawFurniture();
 }
 
@@ -1675,11 +1757,37 @@ function drawFurniture() {
 function drawDoor() {
   const wy = homeWallY(), x = CONFIG.W;
   rect(COLORS.night, x - 11, wy - 3, 22, 13);                // frame
+  if (state.door.open) {                                     // open: a gap onto the snow, with the door leaf swung to the side
+    ctx.drawImage(bg, x - 8, wy, 8, 10, x - 8, wy, 8, 10);
+    ctx.drawImage(bg, 0, wy, 8, 10, x, wy, 8, 10);
+    rect('#6b4423', x - 10, wy - 1, 2, 11); rect('#c8b24a', x - 10, wy + 4, 1, 2);
+    return;
+  }
   rect('#4a2f17', x - 9, wy - 1, 18, 11);                    // door
   rect('#6b4423', x - 9, wy - 1, 8, 11);
   rect('#c8b24a', x + 4, wy + 4, 2, 2);                      // knob
   for (const y of [wy, wy + 6]) { rect('#c58b4a', x - 12, y, 24, 3); rect('#8a5a2b', x - 12, y + 2, 24, 1); }   // boards across it
   for (const sx of [-8, 6]) { rect(COLORS.night, x + sx, wy + 1, 1, 1); rect(COLORS.night, x + sx + 2, wy + 7, 1, 1); }   // nails
+}
+
+// Small pixel icons for the perks (about 5x5 units; k = scale), used on the wall plaques, the buttons and the confirm screen
+function perkIcon(id, cx, cy, k) {
+  const r = (c, x, y, w, h) => rect(c, Math.round(cx + x * k), Math.round(cy + y * k), w * k, h * k);
+  if (id === 'health') { r(COLORS.red, -1, -2, 3, 5); r(COLORS.red, -2, -1, 5, 3); }
+  else if (id === 'avalanche') { r(COLORS.snow, 0, -2, 1, 1); r(COLORS.snow, -1, -1, 3, 1); r(COLORS.ice, -2, 0, 5, 3); }
+  else if (id === 'gun') { r(COLORS.ice, -2, -1, 5, 2); r(COLORS.ice, 2, -1, 2, 1); r(COLORS.ice, -2, 1, 2, 2); }
+  else { r('#c58b4a', -2, -2, 5, 5); r('#6b4423', -1, -1, 3, 4); r(COLORS.gold, 1, 1, 1, 1); }
+}
+
+function drawPerkPlaques() {
+  const wy = homeWallY();
+  for (const p of HOME_PERKS) {
+    if (state.perks[p.id]) ctx.globalAlpha = 0.45;
+    rect(COLORS.gold, p.x - 8, wy + 1, 16, 8);
+    rect('#2b1d10', p.x - 7, wy + 2, 14, 6);
+    perkIcon(p.id, p.x, wy + 5, 1);
+    ctx.globalAlpha = 1;
+  }
 }
 
 // Warning while enemies are inside the house: a big blinking banner, plus a red bar on the side where one is off screen
@@ -1991,6 +2099,16 @@ function drawHud() {
     if (state.mode === 'playing') state.buttons.push({ x, y: y + view.ty, w: s, h: s, onTap: () => setMode('paused') });
   }
   drawMuteButton(isCoop() ? x : x - s - 4, y, state.mode === 'playing');
+  if (state.home) {                                           // owned perks: tap one to use it
+    let py = y + s + 6;
+    for (const p of HOME_PERKS) {
+      if (!state.perks[p.id]) continue;
+      ctx.globalAlpha = 0.8; rect(COLORS.gold, x - 1, py - 1, s + 2, s + 2); rect(COLORS.night, x, py, s, s); ctx.globalAlpha = 1;
+      perkIcon(p.id, x + Math.floor(s / 2), py + Math.floor(s / 2), Math.max(2, Math.floor(s / 7)));
+      if (state.mode === 'playing') state.buttons.push({ x, y: py + view.ty, w: s, h: s, onTap: () => usePerk(p.id) });
+      py += s + 5;
+    }
+  }
 }
 
 function drawMuteButton(x, y, tappable) {
@@ -2257,6 +2375,24 @@ function drawLost() {
   button('MENU', CONFIG.W / 2, 170, 110, 1, leaveCoop);
 }
 
+function drawPerkConfirm() {
+  dim();
+  const p = HOME_PERKS.find(q => q.id === state.ask);
+  if (!p) return;
+  const cx = CONFIG.W / 2, h = btnH();
+  rect(COLORS.gold, cx - 17, 50, 34, 34); rect('#2b1d10', cx - 15, 52, 30, 30);
+  perkIcon(p.id, cx, 67, 4);
+  drawTextShadow(p.name, cx, 94, 2, COLORS.snow, 'center');
+  drawTextShadow('COST ' + p.cost, cx, 116, 1, COLORS.gold, 'center');
+  drawTextShadow('YOU HAVE ' + state.score, cx, 128, 1, COLORS.snow, 'center');
+  if (state.perks[p.id] || state.score < p.cost) {
+    drawTextShadow(state.perks[p.id] ? 'ALREADY OWNED' : 'NOT ENOUGH POINTS', cx, 144, 1, COLORS.red, 'center');
+    button('OK', cx, 175, 90, 1, closePerk, COLORS.ice, 1);
+  } else {
+    button('BUY', cx, 165, 100, 1, () => { buyPerk(p); closePerk(); }, COLORS.hatGreen, 1);
+    button('CANCEL', cx, 165 + h + 8, 100, 1, closePerk, COLORS.shadow, 1);
+  }
+}
 function drawPaused() {
   dim();
   drawTextShadow('PAUSED', CONFIG.W / 2, 80, 3, COLORS.snow, 'center');
@@ -2308,7 +2444,7 @@ function drawAvalanche() {
   const av = state.avalanche;
   if (!av) return;
   const t = performance.now() / 1000, top = av.y - CONFIG.avalancheBand, q = CONFIG.avalancheBand / 4;
-  for (let x = 0; x < CONFIG.W; x += 6) {
+  for (let x = 0; x < (state.home ? CONFIG.W * 2 : CONFIG.W); x += 6) {
     const lead = av.y + Math.round(Math.sin(x * 0.45 + t * 14) * 3) + (x % 12 ? 0 : 2);      // rolling, uneven front
     for (let k = 0; k < 4; k++) {
       ctx.globalAlpha = 0.25 * (k + 1);
@@ -2387,6 +2523,7 @@ function draw() {
     drawBanner();
     drawPopup();
     if (state.mode === 'paused') drawPaused();
+    else if (state.mode === 'perkconfirm') drawPerkConfirm();
     else if (state.mode === 'gameover') drawGameOver();
     else if (state.mode === 'levelwin') drawLevelWin();
   }
