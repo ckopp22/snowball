@@ -2094,6 +2094,7 @@ function drawHud() {
   drawText('BEST ' + Math.max(bestNow(), state.score), CONFIG.W - 3, 3, 1, COLORS.snow, 'right');
   for (let i = 0; i < CONFIG.fortHealth; i++) drawFlake(3 + i * 6, 14, i < state.health);
   if (state.gun > 0) drawTextShadow('GUN ' + Math.ceil(state.gun), 3, 24, 1, COLORS.coatBlue);
+  if (state.home && state.mode === 'playing') button('+1000', 3 + 28, 36 + Math.ceil(btnH() / 2), 56, 1, () => { state.score += 1000; }, COLORS.ice, 1);   // TEST: remove later
 
   // Pause button (square, at least 44 px on screen); only tappable while playing. Co-op can't pause.
   const s = btnH(), x = CONFIG.W - 3 - s, y = 13;
