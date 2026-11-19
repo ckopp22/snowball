@@ -575,7 +575,7 @@ function updateAim(p) {
   state.aimValid = pull >= CONFIG.minPull;
   if (!state.aimValid) return;
   let a = Math.atan2(-dy, dx) / DEG;         // -180..180, positive = up
-  if (state.runner || (state.home && state.py < homeWallY() + 5)) { state.aimAngle = a; return; }   // Runner, or Home outside: full 360          // Runner: full 360
+  if (state.runner || (state.home && (state.door.open || state.py < homeWallY() + 5))) { state.aimAngle = a; return; }   // Runner, or Home with the door open / outside: full 360          // Runner: full 360
   const lo = state.home ? 0 : CONFIG.minAngle, hi = state.home ? 180 : CONFIG.maxAngle;   // Home: straight left or right is allowed
   if (a < 0) a = a > -90 ? lo : hi;                           // downward -> nearest edge
   state.aimAngle = Math.min(hi, Math.max(lo, a));
@@ -689,10 +689,10 @@ function updateFlakes(dt) {
 const clampRx = x => Math.max(8, Math.min(CONFIG.W - 8, x)), clampRy = y => Math.max(24, Math.min(view.h - 10, y));
 // Home perks: plaques on the outer wall (two left of the door, two right); hit one with a snowball to buy it
 const HOME_PERKS = [
-  { id: 'health', name: 'HEALTH', x: 120, cost: 150 },
-  { id: 'avalanche', name: 'AVALANCHE', x: 150, cost: 300 },
-  { id: 'gun', name: 'MACHINE GUN', x: 210, cost: 200 },
-  { id: 'door', name: 'DOOR', x: 240, cost: 100 },
+  { id: 'health', name: 'HEALTH', x: 120, cost: 1000 },
+  { id: 'avalanche', name: 'AVALANCHE', x: 150, cost: 500 },
+  { id: 'gun', name: 'MACHINE GUN', x: 210, cost: 500 },
+  { id: 'door', name: 'DOOR', x: 240, cost: 500 },
 ];
 function askPerk(id) { state.ask = id; setMode('perkconfirm'); }
 function closePerk() { state.ask = null; state.mode = 'playing'; }
@@ -819,6 +819,12 @@ function update(dt) {
   }
 
   moveRunner(dt);
+  if ((state.runner || state.home) && state.power) {          // running into the snowflake collects it too
+    for (const sl of slots()) {
+      const p = pl(sl);
+      if (Math.hypot(p.px - state.power.x, p.py - state.power.y) <= CONFIG.powerRadius + 6) { collectPower(sl); break; }
+    }
+  }
   updateAvalanche(dt);
   updateBullies(dt);
   updateParticles(dt);
@@ -1773,7 +1779,7 @@ function drawDoor() {
 // Small pixel icons for the perks (about 5x5 units; k = scale), used on the wall plaques, the buttons and the confirm screen
 function perkIcon(id, cx, cy, k) {
   const r = (c, x, y, w, h) => rect(c, Math.round(cx + x * k), Math.round(cy + y * k), w * k, h * k);
-  if (id === 'health') { r(COLORS.red, -1, -2, 3, 5); r(COLORS.red, -2, -1, 5, 3); }
+  if (id === 'health') { r(COLORS.hatGreen, -1, -2, 3, 5); r(COLORS.hatGreen, -2, -1, 5, 3); }
   else if (id === 'avalanche') { r(COLORS.snow, 0, -2, 1, 1); r(COLORS.snow, -1, -1, 3, 1); r(COLORS.ice, -2, 0, 5, 3); }
   else if (id === 'gun') { r(COLORS.ice, -2, -1, 5, 2); r(COLORS.ice, 2, -1, 2, 1); r(COLORS.ice, -2, 1, 2, 2); }
   else { r('#c58b4a', -2, -2, 5, 5); r('#6b4423', -1, -1, 3, 4); r(COLORS.gold, 1, 1, 1, 1); }
@@ -2099,14 +2105,16 @@ function drawHud() {
     if (state.mode === 'playing') state.buttons.push({ x, y: y + view.ty, w: s, h: s, onTap: () => setMode('paused') });
   }
   drawMuteButton(isCoop() ? x : x - s - 4, y, state.mode === 'playing');
-  if (state.home) {                                           // owned perks: tap one to use it
+  if (state.home) {                                           // owned perks: smaller and see-through; tap one to use it
+    const ps = Math.round(s * 0.75), px = CONFIG.W - 3 - ps;
     let py = y + s + 6;
     for (const p of HOME_PERKS) {
       if (!state.perks[p.id]) continue;
-      ctx.globalAlpha = 0.8; rect(COLORS.gold, x - 1, py - 1, s + 2, s + 2); rect(COLORS.night, x, py, s, s); ctx.globalAlpha = 1;
-      perkIcon(p.id, x + Math.floor(s / 2), py + Math.floor(s / 2), Math.max(2, Math.floor(s / 7)));
-      if (state.mode === 'playing') state.buttons.push({ x, y: py + view.ty, w: s, h: s, onTap: () => usePerk(p.id) });
-      py += s + 5;
+      ctx.globalAlpha = 0.5; rect(COLORS.gold, px - 1, py - 1, ps + 2, ps + 2); rect(COLORS.night, px, py, ps, ps);
+      perkIcon(p.id, px + Math.floor(ps / 2), py + Math.floor(ps / 2), Math.max(2, Math.floor(ps / 7)));
+      ctx.globalAlpha = 1;
+      if (state.mode === 'playing') state.buttons.push({ x: px, y: py + view.ty, w: ps, h: ps, onTap: () => usePerk(p.id) });
+      py += ps + 4;
     }
   }
 }
