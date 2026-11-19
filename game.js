@@ -704,7 +704,7 @@ function buyPerk(p) {
   state.popup = { text: p.name + ' BOUGHT!', t: 1.4 };
 }
 function usePerk(id) {
-  if (state.mode !== 'playing' || !state.perks[id]) return;
+  if (state.mode !== 'playing' || !state.perks[id] || performance.now() - (state.resumeAt || -1e9) < 500) return;   // ignore the tap that resumes from pause
   const wy = homeWallY(), d = state.door;
   if (id === 'health') {
     if (state.health >= CONFIG.fortHealth) { state.popup = { text: 'HEALTH FULL', t: 1.2 }; return; }
@@ -860,7 +860,7 @@ function resetGame() {
   if (state.home) { state.px = CONFIG.W; state.py = homeWallY() + 18; }
 }
 
-function setMode(m) { endAim(); state.stick = null; if (MENU_MODES.includes(m)) state.runner = state.home = false; state.mode = m; }
+function setMode(m) { endAim(); state.stick = null; if (MENU_MODES.includes(m)) state.runner = state.home = false; if (state.mode === 'paused' && m === 'playing') state.resumeAt = performance.now(); state.mode = m; }
 
 // DEBUG (easy to remove): open index.html?wave=8 to start at wave 8
 const DEBUG_START_WAVE = parseInt(new URLSearchParams(location.search).get('wave'), 10) || 1;
