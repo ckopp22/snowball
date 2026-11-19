@@ -793,7 +793,7 @@ function update(dt) {
       const wy = homeWallY() + 5;
       if ((py - wy) * (s.y - wy) < 0) {
         const xc = px + (s.x - px) * (py - wy) / (py - s.y);
-        const pk = HOME_PERKS.find(p => Math.abs(xc - p.x) <= 9);
+        const pk = HOME_PERKS.find(p => Math.abs(xc - p.x) <= 9 && Math.abs(state.px - p.x) <= 16);   // must be standing in front of it
         if (pk) { puff(xc, wy); sfx('clank'); state.snowballs.splice(i, 1); askPerk(pk.id); continue; }
         const gap = state.wins.some(w => Math.abs(xc - w.x) <= CONFIG.homeWinHalf - 1) || (state.door.open && Math.abs(xc - state.door.x) <= 7);
         if (!gap) { puff(xc, wy); state.snowballs.splice(i, 1); continue; }
