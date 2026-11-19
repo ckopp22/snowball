@@ -1779,7 +1779,10 @@ function drawDoor() {
 // Small pixel icons for the perks (about 5x5 units; k = scale), used on the wall plaques, the buttons and the confirm screen
 function perkIcon(id, cx, cy, k) {
   const r = (c, x, y, w, h) => rect(c, Math.round(cx + x * k), Math.round(cy + y * k), w * k, h * k);
-  if (id === 'health') { r(COLORS.hatGreen, -1, -2, 3, 5); r(COLORS.hatGreen, -2, -1, 5, 3); }
+  if (id === 'health') {                                    // bright green medical cross (outlined and longer when drawn bigger)
+    if (k >= 2) { r(COLORS.night, -2, -4, 5, 9); r(COLORS.night, -4, -2, 9, 5); r('#2ee05a', -1, -3, 3, 7); r('#2ee05a', -3, -1, 7, 3); }
+    else { r('#2ee05a', -1, -2, 3, 5); r('#2ee05a', -2, -1, 5, 3); }
+  }
   else if (id === 'avalanche') { r(COLORS.snow, 0, -2, 1, 1); r(COLORS.snow, -1, -1, 3, 1); r(COLORS.ice, -2, 0, 5, 3); }
   else if (id === 'gun') { r(COLORS.ice, -2, -1, 5, 2); r(COLORS.ice, 2, -1, 2, 1); r(COLORS.ice, -2, 1, 2, 2); }
   else { r('#c58b4a', -2, -2, 5, 5); r('#6b4423', -1, -1, 3, 4); r(COLORS.gold, 1, 1, 1, 1); }
