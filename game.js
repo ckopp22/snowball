@@ -1780,8 +1780,8 @@ function drawDoor() {
 function perkIcon(id, cx, cy, k) {
   const r = (c, x, y, w, h) => rect(c, Math.round(cx + x * k), Math.round(cy + y * k), w * k, h * k);
   if (id === 'health') {                                    // bright green medical cross (outlined and longer when drawn bigger)
-    if (k >= 2) { r(COLORS.night, -2, -4, 5, 9); r(COLORS.night, -4, -2, 9, 5); r('#2ee05a', -1, -3, 3, 7); r('#2ee05a', -3, -1, 7, 3); }
-    else { r('#2ee05a', -1, -2, 3, 5); r('#2ee05a', -2, -1, 5, 3); }
+    if (k >= 2) { r('#2ee05a', -1, -2, 3, 5); r('#2ee05a', -2, -1, 5, 3); }
+    else { r('#2ee05a', 0, -2, 1, 5); r('#2ee05a', -2, 0, 5, 1); }      // thin cross on the small plaque so it doesn't blur into a blob
   }
   else if (id === 'avalanche') { r(COLORS.snow, 0, -2, 1, 1); r(COLORS.snow, -1, -1, 3, 1); r(COLORS.ice, -2, 0, 5, 3); }
   else if (id === 'gun') { r(COLORS.ice, -2, -1, 5, 2); r(COLORS.ice, 2, -1, 2, 1); r(COLORS.ice, -2, 1, 2, 2); }
@@ -2114,7 +2114,7 @@ function drawHud() {
     for (const p of HOME_PERKS) {
       if (!state.perks[p.id]) continue;
       ctx.globalAlpha = 0.5; rect(COLORS.gold, px - 1, py - 1, ps + 2, ps + 2); rect(COLORS.night, px, py, ps, ps);
-      perkIcon(p.id, px + Math.floor(ps / 2), py + Math.floor(ps / 2), Math.max(2, Math.floor(ps / 7)));
+      perkIcon(p.id, px + Math.floor(ps / 2), py + Math.floor(ps / 2), Math.max(1, Math.floor((ps - 4) / 5)));
       ctx.globalAlpha = 1;
       if (state.mode === 'playing') state.buttons.push({ x: px, y: py + view.ty, w: ps, h: ps, onTap: () => usePerk(p.id) });
       py += ps + 4;
