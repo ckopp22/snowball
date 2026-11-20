@@ -2343,11 +2343,6 @@ function drawTitle() {
   drawText5('SNOWBALL', CONFIG.W / 2, 50, 3, COLORS.coatBlue, 'center', COLORS.night);
   const sh = button('STORY', CONFIG.W / 2, 140, 100, 1, () => setMode('levels'), COLORS.hatGreen, 1);
   button('WAVES', CONFIG.W / 2, 140 + sh + 8, 100, 1, () => setMode('wavesmenu'));
-  // level badge on the Story button's top-right corner
-  const bt = 'LV ' + state.storyUnlocked, bw = bt.length * 6 + 5, bx = CONFIG.W / 2 + 50 - bw + 4, by = 140 - Math.ceil(sh / 2) - 5;
-  rect(COLORS.night, bx - 1, by - 1, bw + 2, 12);
-  rect(COLORS.red, bx, by, bw, 10);
-  drawText5(bt, bx + Math.round(bw / 2), by + 2, 1, COLORS.snow, 'center');
   if (installEvent) button('INSTALL', 3 + 43, 3 + Math.ceil(btnH() / 2), 86, 1, promptInstall, COLORS.ice, 1);   // top left
   drawMuteButton(CONFIG.W - 3 - btnH(), 3, true);
 }
