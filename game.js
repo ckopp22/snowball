@@ -767,6 +767,7 @@ function usePerk(id, slot = net.localSlot) {
 }
 const windowAttackers = w => state.bullies.filter(b => b.state === 'walking' && b.phase === 1 && state.wins[b.win] === w).length;
 const homeWalkable = (x, y) => {            // where the boy may stand (door open)
+  if (state.last && FORT_WALLS.some(w => x > w[0] - 3 && x < w[0] + w[2] + 3 && y > w[1] - 3 && y < w[1] + w[3] + 3)) return false;   // the snow fort's walls are solid; the doorway is the way in
   const wy = homeWallY(), L = CONFIG.homeL + 18, R = CONFIG.homeR - 18;
   if (y >= wy + 18 && y <= wy + 54) return x >= L && x <= R;                                   // floor
   if (Math.abs(x - state.door.x) <= 5 && y >= wy - 8 && y <= wy + 54) return true;             // doorway
@@ -958,6 +959,7 @@ const LB_LIM0 = () => homeWallY() - 120, LB_LIMF = () => CONFIG.lastTop + 24;   
 
 // The snow fort at the Castle: a boy standing in it takes no damage and enemies are kept out
 const FORT_X0 = CONFIG.W - 34, FORT_X1 = CONFIG.W + 34, FORT_Y0 = CONFIG.lastTop + 150, FORT_Y1 = CONFIG.lastTop + 186;   // well back from the Castle, like the Fort levels
+const FORT_WALLS = [[FORT_X0, FORT_Y0, FORT_X1 - FORT_X0, 6], [FORT_X0, FORT_Y0, 6, FORT_Y1 - FORT_Y0], [FORT_X1 - 6, FORT_Y0, 6, FORT_Y1 - FORT_Y0], [FORT_X0, FORT_Y1 - 6, 24, 6], [FORT_X1 - 24, FORT_Y1 - 6, 24, 6]];   // x, y, w, h (same as drawLastFort)
 const inLastFort = p => state.last && p.px >= FORT_X0 + 6 && p.px <= FORT_X1 - 6 && p.py >= FORT_Y0 + 6 && p.py <= FORT_Y1 - 6;
 const anyoneInFort = () => state.last && slots().some(sl => inLastFort(pl(sl)));
 function keepOutOfFort(b, T) {          // while a boy is inside, enemies can't walk through the fort walls
@@ -1540,12 +1542,7 @@ function updateHomeBully(b, T, dt) {          // true when it reaches the boy
   if (b.phase === 5 && b.y < wy - 1) b.phase = 4;
   b.vx = dt > 0 ? (b.x - px) / dt : 0; b.vy = dt > 0 ? (b.y - py) / dt : 0;
   footstep(b, T, px, py);
-  const near = p => Math.hypot(b.x - p.px, b.y - p.py) <= 6 + T.radius;
-  if (T.fortHit && state.last) {                           // a Yeti reaching a boy in the fort still hurts: 1 damage, then it needs a long gap before the next
-    b.hitCd = Math.max(0, (b.hitCd || 0) - dt);
-    if (b.hitCd <= 0 && cand.some(p => inLastFort(p) && near(p))) { b.hitCd = T.fortHit; damageFort(1); }
-  }
-  return b.phase >= 2 && cand.some(p => near(p) && !inLastFort(p));
+  return b.phase >= 2 && cand.some(p => Math.hypot(b.x - p.px, b.y - p.py) <= 6 + T.radius && !inLastFort(p));
 }
 
 function updateBullies(dt) {
@@ -1591,7 +1588,14 @@ function updateBullies(dt) {
     if (b.state === 'walking' && state.home) {
       if (updateHomeBully(b, T, dt)) { state.bullies.splice(i, 1); damageFort(T.fortDamage); }
       else if (state.last && !b.guard) {
-        if (anyoneInFort() && !T.fortHit) keepOutOfFort(b, T);   // (Yetis smash straight into the fort)
+        if (anyoneInFort()) {
+          keepOutOfFort(b, T);
+          if (T.fortHit) {                                  // a Yeti pressed against the fort wall still hurts a boy inside: 1 damage, then a long gap
+            b.hitCd = Math.max(0, (b.hitCd || 0) - dt);
+            const r = T.radius + 2;
+            if (b.hitCd <= 0 && b.x >= FORT_X0 - r && b.x <= FORT_X1 + r && b.y >= FORT_Y0 - r && b.y <= FORT_Y1 + r) { b.hitCd = T.fortHit; damageFort(1); }
+          }
+        }
         for (const p of LAST_TREES) {                      // enemies walk around the trees, not through them
           const tx = p[0] + 4, ty = p[1] + CONFIG.treeBaseY, R = CONFIG.treeBaseRadius + T.radius, ddx = b.x - tx, ddy = b.y - ty, d = Math.hypot(ddx, ddy);
           if (d < R) { const nx = d > 0.01 ? ddx / d : 1, ny = d > 0.01 ? ddy / d : 0; b.x += nx * (R - d); b.y += ny * (R - d); b.x0 = b.x; }
