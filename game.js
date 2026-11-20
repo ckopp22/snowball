@@ -1042,8 +1042,8 @@ function startWave(n) {
 
 let bullyId = 0;
 
-// Throwers and snowmobiles only show up in Home mode: Story level 4+ / 6+, or endless wave 15+ (not co-op)
-const homeOk = (wave, lvl) => state.home && !isCoop() && (state.story ? state.story.level >= lvl : wave >= 15);
+// Throwers and snowmobiles only show up in Home mode: Story level 4+ / 6+, or endless wave 15+ 
+const homeOk = (wave, lvl) => state.home && (state.story ? state.story.level >= lvl : wave >= 15);
 const throwerOk = wave => homeOk(wave, 4);
 const snowmobileOk = wave => homeOk(wave, 6);
 
@@ -1759,8 +1759,9 @@ function buildSnapshot() {
     g: [r1(state.gun), r1(state.remote.gun)],                                   // machine-gun seconds left [host, guest]
     ha: [r1(state.aimAngle), state.aiming && state.aimValid ? 1 : 0, state.swing],   // host aim, for its arm and dotted line
     B: state.bullies.map(b => [b.id, TYPE_IDS.indexOf(b.type), r1(b.x), r1(b.y), r1(b.vx), r1(b.vy),
-                               STATE_IDS.indexOf(b.state), r1(b.t), b.flash > 0 ? 1 : 0, r1(b.ph), r1(b.ang), b.hp, b.phase || 0, b.win || 0]),
+                               STATE_IDS.indexOf(b.state), r1(b.t), b.flash > 0 ? 1 : 0, r1(b.ph), r1(b.ang), b.hp, b.phase || 0, b.win || 0, TYPE_IDS.indexOf(b.rider), b.dropped ? 1 : 0]),
     S: state.snowballs.map(s => [r1(s.x), r1(s.y), r1(s.vx), r1(s.vy)]),
+    E: state.enemyBalls.map(s => [r1(s.x), r1(s.y), r1(s.vx), r1(s.vy)]),
     av: state.avalanche ? r1(state.avalanche.y) : null,
     ho: state.home ? { w: state.wins.map(w => r1(w.hp)), d: state.door.open ? 1 : 0, p: [state, state.remote].map(q => Object.keys(q.perks).filter(k => q.perks[k])) } : null,   // home: window boards, door, owned perks
     ev,
@@ -1806,10 +1807,11 @@ function applySnapshot(d) {
   state.bullies = d.B.map(a => {
     const b = old.get(a[0]) || { id: a[0], stepAcc: 0, stepSide: 1 };
     b.type = TYPE_IDS[a[1]]; b.x = a[2]; b.y = a[3]; b.vx = a[4]; b.vy = a[5];
-    b.state = STATE_IDS[a[6]]; b.t = a[7]; b.flash = a[8] ? CONFIG.hitFlashTime : 0; b.ph = a[9]; b.ang = a[10]; b.hp = a[11]; b.phase = a[12]; b.win = a[13];
+    b.state = STATE_IDS[a[6]]; b.t = a[7]; b.flash = a[8] ? CONFIG.hitFlashTime : 0; b.ph = a[9]; b.ang = a[10]; b.hp = a[11]; b.phase = a[12]; b.win = a[13]; b.rider = TYPE_IDS[a[14]]; b.dropped = !!a[15];
     return b;
   });
   state.snowballs = d.S.map(a => ({ x: a[0], y: a[1], vx: a[2], vy: a[3] }));
+  state.enemyBalls = (d.E || []).map(a => ({ x: a[0], y: a[1], vx: a[2], vy: a[3] }));
   state.avalanche = typeof d.av === 'number' ? { y: d.av } : null;
   if (d.ho) {
     d.ho.w.forEach((hp, i) => { if (state.wins[i]) state.wins[i].hp = hp; });
@@ -1846,11 +1848,12 @@ function updateGuest(dt) {
     state.power.y = state.power.baseY + Math.sin(state.power.age * 2.5) * 3;
   }
   for (const s of state.snowballs) { s.x += s.vx * dt; s.y += s.vy * dt; }
+  for (const s of state.enemyBalls) { s.x += s.vx * dt; s.y += s.vy * dt; }
   for (const b of state.bullies) {
     if (b.state === 'walking') {
       const px = b.x, py = b.y;
       b.x += b.vx * dt; b.y += b.vy * dt;
-      footstep(b, CONFIG.bullyTypes[b.type], px, py);
+      if (!CONFIG.bullyTypes[b.type].drives) footstep(b, CONFIG.bullyTypes[b.type], px, py);
     } else b.t += dt;
   }
   if (state.avalanche) { state.avalanche.y += CONFIG.avalancheSpeed * dt; avalancheFx(dt); }
