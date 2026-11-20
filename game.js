@@ -2606,7 +2606,8 @@ function drawRunPan() {
   drawFlakes();
   for (let p = 0; p < 2; p++) { ctx.save(); ctx.translate(p * W - cam, 0); drawTreesAndBullies(); if (p === 0) drawFort(); ctx.restore(); }
   homeFresh(); state.home = true;                          // page 2 is the house (camera 90 centres it on the door, as on the Home page)
-  ctx.save(); ctx.translate(2 * W - cam - W / 2, 0); drawHome(); ctx.restore();
+  ctx.save(); ctx.beginPath(); ctx.rect(2 * W - cam, 0, W, view.h + 16); ctx.clip();   // keep the house inside its own page so it never overlaps the Runner page
+  ctx.translate(2 * W - cam - W / 2, 0); drawHome(); ctx.restore();
   state.home = false;
   // One boy runs the whole way (world x), so he never stops or swaps with a second boy
   const u = Math.min(1, t / (RUN_T + PAN_T)), x0 = from * W + CONFIG.kidX, x1 = to * W + CONFIG.kidX;
