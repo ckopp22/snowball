@@ -2219,7 +2219,7 @@ function drawPerkPlaques() {
 
 // Warning while enemies are inside the house: a big blinking banner, plus a red bar on the side where one is off screen
 function drawWinAlerts() {
-  if (!state.home || state.mode !== 'playing' || Math.floor(state.time * 4) % 2) return;
+  if (!state.home || state.last || state.mode !== 'playing' || Math.floor(state.time * 4) % 2) return;
   const inside = state.bullies.filter(b => b.state === 'walking' && b.phase >= 2);
   if (!inside.length) return;
   drawText5('ENEMY INSIDE!', CONFIG.W / 2, view.safeTop + 26, 2, COLORS.red, 'center', COLORS.night);
