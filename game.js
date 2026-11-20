@@ -1242,6 +1242,7 @@ function updatePower(dt) {
 
 // Wave N shows N-1 trees (none in wave 1), up to treeMax; the power-up can hide them for a while
 function activeTrees() {
+  if (state.mode === 'homelevels') return [];
   if (MENU_MODES.includes(state.mode)) return CONFIG.treePositions.slice(0, CONFIG.treeMax);   // menus show them all
   if (state.home) return [];
   return CONFIG.treePositions.slice(0, Math.max(0, Math.min(CONFIG.treeMax, state.wave - 1) - state.treesRemoved));
@@ -2584,8 +2585,8 @@ const drawHomeLevels = () => drawLevelPage('HOME', state.homeUnlocked, startHome
 
 // The boy stands at the bottom of each page (the Fort page draws him itself); gold arrows beside him lead to the neighbouring pages
 function drawPageBoy(p) {
-  if (p > 0) drawKidAt(CONFIG.kidX, CONFIG.kidY, 0, breath(0), 0);
-  const by = CONFIG.kidY + 7;
+  if (p === 1) drawKidAt(CONFIG.kidX, CONFIG.kidY, 0, breath(0), 0);   // Home page: the kid is drawn inside the house by the normal pass
+  const by = (p === 2 ? homeBoyY() : CONFIG.kidY) + 7;
   if (p > 0) {
     const bx = CONFIG.kidX - 38;
     button('', bx, by, 28, 1, () => startPan(p, p - 1), COLORS.gold, 1);
@@ -2603,10 +2604,14 @@ function drawRunPan() {
   const cam = Math.round((from + (to - from) * e) * W);
   for (let p = 0; p < 3; p++) ctx.drawImage(bg, p * W - cam, 0);
   drawFlakes();
-  for (let p = 0; p < 3; p++) { ctx.save(); ctx.translate(p * W - cam, 0); drawTreesAndBullies(); if (p === 0) drawFort(); ctx.restore(); }
+  for (let p = 0; p < 2; p++) { ctx.save(); ctx.translate(p * W - cam, 0); drawTreesAndBullies(); if (p === 0) drawFort(); ctx.restore(); }
+  homeFresh(); state.home = true;                          // page 2 is the house (camera 90 centres it on the door, as on the Home page)
+  ctx.save(); ctx.translate(2 * W - cam - W / 2, 0); drawHome(); ctx.restore();
+  state.home = false;
   // One boy runs the whole way (world x), so he never stops or swaps with a second boy
   const u = Math.min(1, t / (RUN_T + PAN_T)), x0 = from * W + CONFIG.kidX, x1 = to * W + CONFIG.kidX;
-  drawKidAt(Math.round(x0 + (x1 - x0) * u) - cam, CONFIG.kidY, 0, 0, 1 + (Math.floor(t * 10) % 2));
+  const ky = p => p === 2 ? homeBoyY() : CONFIG.kidY;
+  drawKidAt(Math.round(x0 + (x1 - x0) * u) - cam, Math.round(ky(from) + (ky(to) - ky(from)) * u), 0, 0, 1 + (Math.floor(t * 10) % 2));
   for (const [p, fn] of [[1, drawRunnerLevels], [2, drawHomeLevels]]) { ctx.save(); ctx.translate(p * W - cam, 0); withInset(fn); ctx.restore(); }
   state.buttons = [];
 }
@@ -2800,7 +2805,21 @@ function drawSplash() {
   state.buttons.push({ x: 0, y: 0, w: CONFIG.W, h: view.h, onTap: () => setMode('title') });
 }
 
+// The Home level select shows the real house with the boy standing on its floor in front of the door
+function homeFresh() {
+  state.wins = [60, 300].map(x => ({ x, hp: CONFIG.homeWinHp }));
+  state.door = { x: CONFIG.W, open: false }; state.perks = {};
+}
+const homeBoyY = () => homeWallY() + 29;   // top-left y of the boy standing on the house floor
+
 function draw() {
+  const hv = state.mode === 'homelevels';
+  if (hv) { homeFresh(); state.home = true; state.px = CONFIG.W; state.py = homeWallY() + 36; }
+  drawFrame();
+  if (hv) state.home = false;
+}
+
+function drawFrame() {
   state.buttons = [];
   if (state.mode === 'splash') { drawSplash(); return; }
   if (logoEl && logoEl.parentNode) logoEl.remove();
@@ -2821,7 +2840,7 @@ function draw() {
   drawTreesAndBullies();
   drawPower();
   drawAvalanche();
-  const away = state.mode === 'runnerlevels' || state.mode === 'homelevels';   // the fort and boy are left behind on the Runner screen
+  const away = state.mode === 'runnerlevels';   // the fort and boy are left behind on the Runner screen
   if (!state.runner && !state.home && !away) drawFort();
   if (!away) for (const sl of slots()) drawKid(sl);
   for (const sl of slots()) drawArm(sl);
