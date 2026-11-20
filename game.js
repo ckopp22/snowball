@@ -2304,7 +2304,7 @@ function chooseWaveType(r) { state.wantRunner = r === true; if (state.typeCoop) 
 function drawWaveType() {
   drawText5('WAVES', CONFIG.W / 2, 50, 3, COLORS.coatBlue, 'center', COLORS.night);
   const h = btnH();
-  button('SNOW FORT', CONFIG.W / 2, 110, 110, 1, () => chooseWaveType(false));
+  button('FORT', CONFIG.W / 2, 110, 110, 1, () => chooseWaveType(false));
   button('RUNNER', CONFIG.W / 2, 110 + h + 8, 110, 1, () => chooseWaveType(true), COLORS.hatGreen, 1);
   if (!state.typeCoop) button('HOME', CONFIG.W / 2, 110 + 2 * (h + 8), 110, 1, () => chooseWaveType('home'), COLORS.coatBlue, 1);
   button('BACK', CONFIG.W / 2, 110 + (state.typeCoop ? 2 : 3) * (h + 8), 76, 1, () => setMode('wavesmenu'), COLORS.shadow, 1);
