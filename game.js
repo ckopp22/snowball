@@ -1388,7 +1388,20 @@ function updatePower(dt) {
 }
 
 // Wave N shows N-1 trees (none in wave 1), up to treeMax; the power-up can hide them for a while
+// Last Battle: trees scattered up the whole map (same on every device: fixed seed, positions independent of screen height)
+const LAST_TREES = (() => {
+  let seed = 20240611;
+  const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+  const out = [];
+  for (let y = -780; y <= 60; y += 36 + Math.floor(rnd() * 34)) {
+    const n = 1 + Math.floor(rnd() * 2);
+    for (let k = 0; k < n; k++) out.push([Math.round(10 + rnd() * (CONFIG.W * 2 - 28)), y]);
+  }
+  return out;
+})();
+
 function activeTrees() {
+  if (state.last && !MENU_MODES.includes(state.mode)) return LAST_TREES;
   if (state.mode === 'homelevels') return [];
   if (MENU_MODES.includes(state.mode)) return CONFIG.treePositions.slice(0, CONFIG.treeMax);   // menus show them all
   if (state.home) return [];
@@ -1562,7 +1575,13 @@ function updateBullies(dt) {
     }
     if (b.state === 'walking' && state.home) {
       if (updateHomeBully(b, T, dt)) { state.bullies.splice(i, 1); damageFort(T.fortDamage); }
-      else if (state.last && !b.guard && anyoneInFort()) keepOutOfFort(b, T);
+      else if (state.last && !b.guard) {
+        if (anyoneInFort()) keepOutOfFort(b, T);
+        for (const p of LAST_TREES) {                      // enemies walk around the trees, not through them
+          const tx = p[0] + 4, ty = p[1] + CONFIG.treeBaseY, R = CONFIG.treeBaseRadius + T.radius, ddx = b.x - tx, ddy = b.y - ty, d = Math.hypot(ddx, ddy);
+          if (d < R) { const nx = d > 0.01 ? ddx / d : 1, ny = d > 0.01 ? ddy / d : 0; b.x += nx * (R - d); b.y += ny * (R - d); b.x0 = b.x; }
+        }
+      }
       continue;
     }
     if (b.state === 'walking') {
