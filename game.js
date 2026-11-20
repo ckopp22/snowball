@@ -82,6 +82,7 @@ const CONFIG = {
   hitFlashTime: 0.12,     // s white flash when a Big Kid (or Yeti) survives a hit
   yetiEvery: 5,           // Yetis per wave: 1 from the Yeti's first wave, +1 every this many waves, up to yetiMax
   yetiMax: 3,
+  waveBonus: 25,          // points per completed wave, added to the score at game over (waves maps)
   footstepGap: 6,         // px walked between footprints (they alternate left / right)
   footstepLife: 3,        // s a footprint takes to fade into the snow
   footstepAlpha: 0.5,     // starting opacity
@@ -1453,6 +1454,8 @@ function recordBest(score) {
 
 function gameOver() {
   endAim();
+  state.bonus = state.story ? 0 : (state.wave - 1) * CONFIG.waveBonus;   // bonus for the waves survived
+  state.score += state.bonus;
   if (!state.story) recordBest(state.score);
   awardXp(state.score);
   state.mode = 'gameover';
@@ -2418,6 +2421,7 @@ function drawPaused() {
 function drawGameOver() {
   dim();
   drawTextShadow('GAME OVER', CONFIG.W / 2, 50, 3, COLORS.snow, 'center');
+  if (state.bonus > 0) drawTextShadow('WAVE BONUS +' + state.bonus, CONFIG.W / 2, 76, 1, COLORS.gold, 'center');
   drawTextShadow('SCORE: ' + state.score, CONFIG.W / 2, 92, 2, COLORS.snow, 'center');
   drawTextShadow('BEST: ' + bestNow(), CONFIG.W / 2, 112, 2, COLORS.snow, 'center');
   if (state.newBest) drawTextShadow('NEW BEST!', CONFIG.W / 2, 136, 2, COLORS.gold, 'center');
