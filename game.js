@@ -2422,7 +2422,9 @@ function drawLevels() {
 // Once all Fort levels are cleared, an arrow beside the boy leads on to the Runner levels
 function drawRunnerArrow() {
   if (state.storyUnlocked <= CONFIG.storyLevels) return;
-  button('>', CONFIG.kidX + 30, CONFIG.kidY + 7, 28, 1, () => { state.pan = { t: 0 }; setMode('runpan'); }, COLORS.gold, 1);
+  const bx = CONFIG.kidX + 30, by = CONFIG.kidY + 7;
+  button('', bx, by, 28, 1, () => { state.pan = { t: 0 }; setMode('runpan'); }, COLORS.gold, 1);
+  for (let i = 0; i < 5; i++) rect(COLORS.night, bx - 5 + i * 2, by - (5 - i), 2, 10 - i * 2);   // right-pointing triangle
 }
 
 const RUN_T = 0.9, PAN_T = 1.0;   // seconds: boy runs off to the right, then the screen pans to the Runner levels
