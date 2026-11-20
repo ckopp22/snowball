@@ -82,7 +82,7 @@ const CONFIG = {
   hitFlashTime: 0.12,     // s white flash when a Big Kid (or Yeti) survives a hit
   yetiEvery: 5,           // Yetis per wave: 1 from the Yeti's first wave, +1 every this many waves, up to yetiMax
   yetiMax: 3,
-  waveBonus: 25,          // points per completed wave, added to the score at game over (waves maps)
+  waveBonus: 100,         // points per completed wave, added to the score at game over (waves maps)
   footstepGap: 6,         // px walked between footprints (they alternate left / right)
   footstepLife: 3,        // s a footprint takes to fade into the snow
   footstepAlpha: 0.5,     // starting opacity
