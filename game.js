@@ -813,7 +813,7 @@ function update(dt) {
     }
     if (state.home && s.y > homeWallY() + 5 && (s.x < CONFIG.homeL + 12 || s.x > CONFIG.homeR - 12)) {   // end walls
       const sp = HOME_PERKS.find(p => p.side), spy = homeWallY() + sp.dy;
-      if (!s.auto && s.x > CONFIG.homeR - 12 && state.px > CONFIG.homeR - 70 && s.y >= spy - 2 && s.y <= spy + 18) { puff(s.x, s.y); sfx('clank'); state.snowballs.splice(i, 1); askPerk(sp.id); continue; }
+      if (!s.auto && s.x > CONFIG.homeR - 12 && state.px >= CONFIG.homeR - 22 && Math.abs(state.py - spy - 8) <= 16 && s.y >= spy - 2 && s.y <= spy + 18) { puff(s.x, s.y); sfx('clank'); state.snowballs.splice(i, 1); askPerk(sp.id); continue; }
       puff(s.x, s.y); state.snowballs.splice(i, 1); continue;
     }
     const bh = firstBullyHit(px, py, s.x, s.y), th = firstTreeHit(px, py, s.x, s.y), ph = firstPowerHit(px, py, s.x, s.y);
