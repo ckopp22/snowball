@@ -105,7 +105,7 @@ const CONFIG = {
     // Snowmobile: Home mode only (Story level 6+, endless wave 15+); races to a window, drops off a random enemy, drives away. Hit first = it crashes and the rider is dropped there
     snowmobile: { speedMul: 3, hp: 1, points: 30, fortDamage: 0, radius: 8, halfH: 7, from: 1, weight: 1.5, weightPer: 0.3, weightMax: 3, drives: true },
     // Yeti: not part of the random mix (special); a fixed number of them is slipped into each wave from wave 11
-    yeti:    { speedMul: 0.7, hp: 5, points: 100, fortDamage: 4, radius: 10, halfH: 10, from: 11, weight: 0, weightPer: 0, weightMax: 0, special: true },
+    yeti:    { speedMul: 0.7, hp: 5, points: 100, fortDamage: 4, fortHit: 2.5, radius: 10, halfH: 10, from: 11, weight: 0, weightPer: 0, weightMax: 0, special: true },
   },
   fallTime: 0.4,          // s flat on its back
   fadeTime: 0.3,          // s fade-out after the fall
@@ -1327,12 +1327,12 @@ function firstPowerHit(ax, ay, bx, by) {
 function collectPower(owner) {
   const pw = state.power;
   state.power = null;
-  state.powerTimer = rand(CONFIG.powerMinGap, CONFIG.powerMaxGap);
+  state.powerTimer = powerGap();
   puff(pw.x, pw.y);
   sfx('power');
   const opts = ['gun'];                                         // only offer effects that do something
   if (state.health < CONFIG.fortHealth) opts.push('heal');
-  if (activeTrees().length) opts.push('trees');
+  if (activeTrees().length && !state.last) opts.push('trees');
   if (state.bullies.some(b => b.state === 'walking') && !state.home) opts.push('avalanche');
   const pick = opts[Math.floor(Math.random() * opts.length)];
   if (pick === 'gun') {
@@ -1356,6 +1356,8 @@ function collectPower(owner) {
   }
 }
 
+const powerGap = () => state.last ? rand(5, 10) : rand(CONFIG.powerMinGap, CONFIG.powerMaxGap);   // Last Battle: snowflakes turn up all the way up the map
+
 function updatePower(dt) {
   // Floating snowflake: appears at a random spot, bobs, vanishes if not popped
   if (state.power) {
@@ -1363,12 +1365,13 @@ function updatePower(dt) {
     state.power.y = state.power.baseY + Math.sin(state.power.age * 2.5) * 3;
     if (state.power.age >= CONFIG.powerLife) {
       state.power = null;
-      state.powerTimer = rand(CONFIG.powerMinGap, CONFIG.powerMaxGap);
+      state.powerTimer = powerGap();
     }
   } else {
     state.powerTimer -= dt;
     if (state.powerTimer <= 0) {
-      const y = rand(CONFIG.powerMinY, CONFIG.powerMaxY);
+      let y = rand(CONFIG.powerMinY, CONFIG.powerMaxY);
+      if (state.last) y = Math.max(Math.max(CONFIG.lastTop + 24, state.lbLimit), Math.min(homeWallY() - 20, Math.min(...slots().map(q => pl(q).py)) - rand(20, 140)));   // just ahead of the northernmost boy
       state.power = { x: rand(18, (state.home ? CONFIG.W * 2 : CONFIG.W) - 18), baseY: y, y, age: 0 };
     }
   }
@@ -1537,7 +1540,12 @@ function updateHomeBully(b, T, dt) {          // true when it reaches the boy
   if (b.phase === 5 && b.y < wy - 1) b.phase = 4;
   b.vx = dt > 0 ? (b.x - px) / dt : 0; b.vy = dt > 0 ? (b.y - py) / dt : 0;
   footstep(b, T, px, py);
-  return b.phase >= 2 && cand.some(p => Math.hypot(b.x - p.px, b.y - p.py) <= 6 + T.radius && !inLastFort(p));
+  const near = p => Math.hypot(b.x - p.px, b.y - p.py) <= 6 + T.radius;
+  if (T.fortHit && state.last) {                           // a Yeti reaching a boy in the fort still hurts: 1 damage, then it needs a long gap before the next
+    b.hitCd = Math.max(0, (b.hitCd || 0) - dt);
+    if (b.hitCd <= 0 && cand.some(p => inLastFort(p) && near(p))) { b.hitCd = T.fortHit; damageFort(1); }
+  }
+  return b.phase >= 2 && cand.some(p => near(p) && !inLastFort(p));
 }
 
 function updateBullies(dt) {
@@ -1583,7 +1591,7 @@ function updateBullies(dt) {
     if (b.state === 'walking' && state.home) {
       if (updateHomeBully(b, T, dt)) { state.bullies.splice(i, 1); damageFort(T.fortDamage); }
       else if (state.last && !b.guard) {
-        if (anyoneInFort()) keepOutOfFort(b, T);
+        if (anyoneInFort() && !T.fortHit) keepOutOfFort(b, T);   // (Yetis smash straight into the fort)
         for (const p of LAST_TREES) {                      // enemies walk around the trees, not through them
           const tx = p[0] + 4, ty = p[1] + CONFIG.treeBaseY, R = CONFIG.treeBaseRadius + T.radius, ddx = b.x - tx, ddy = b.y - ty, d = Math.hypot(ddx, ddy);
           if (d < R) { const nx = d > 0.01 ? ddx / d : 1, ny = d > 0.01 ? ddy / d : 0; b.x += nx * (R - d); b.y += ny * (R - d); b.x0 = b.x; }
