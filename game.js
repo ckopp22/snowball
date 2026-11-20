@@ -981,6 +981,7 @@ function startRunnerLevel(n) {            // Runner level n: no fort, clear a se
   state.story = { level: n, runner: true };
   startWave(2 * n - 1);
   state.toSpawn = 8 + 3 * n;
+  state.yetiLeft = n < 3 ? 0 : Math.min(CONFIG.yetiMax, 1 + Math.floor((n - 3) / 2));   // Yetis mixed in from level 3: 1, +1 every 2 levels
 }
 
 function storyWin() {
