@@ -990,7 +990,7 @@ function updateLastBattle(dt) {
   if ((state.spawnTimer -= dt) > 0) return;       // the way is open: keep them coming at the Castle
   if (inFort) {                                      // a boy in the fort: only Yetis, marching on it from the Castle
     state.spawnTimer = rand(3, 4.5);
-    if (state.bullies.filter(b => b.type === 'yeti' && b.state === 'walking').length >= 4) return;
+    if (state.bullies.filter(b => b.type === 'yeti' && b.state === 'walking').length >= 2) return;
     state.yetiLeft = 1; state.toSpawn = 1; spawnBully();
     return;
   }
@@ -1017,6 +1017,7 @@ function drawLastFort() {
 const inCastle = s => Math.abs(s.x - CONFIG.W) <= 76 && s.y >= CONFIG.lastTop - 100 && s.y <= CONFIG.lastTop + 4;
 function hitCastle(s) {
   puff(s.x, s.y, ['#6e7a8a', COLORS.snow]); sfx('clank');
+  if (!castleOnScreen(s.owner || 0)) return;       // shots from out of sight just bounce off
   state.score += 25;
   if (--state.castleHp > 0) return;
   state.castleHp = 0; state.mode = 'castlewin'; state.cwT = 0; state.snowballs = [];
@@ -3069,6 +3070,13 @@ function draw() {
   if (hv) state.home = false;
 }
 
+// Last Battle camera: follows the boy up the map; nearer the Castle it eases over to a fixed view with the Castle on screen and the boy low down
+function lbCamY(py) {
+  const top = CONFIG.lastTop - 120, t = Math.max(0, Math.min(1, (CONFIG.lastTop + 300 - py) / 150));
+  return Math.max(top, Math.min(0, (py - view.h / 2) * (1 - t) + top * t));
+}
+const castleOnScreen = owner => lbCamY(pl(owner).py) < CONFIG.lastTop - 20;   // only counts while the shooter can see the Castle
+
 function drawFrame() {
   state.buttons = [];
   if (state.mode === 'splash') { drawSplash(); return; }
@@ -3080,7 +3088,7 @@ function drawFrame() {
   if (shaking) { ctx.save(); ctx.translate(Math.round((Math.random() - 0.5) * 6), Math.round((Math.random() - 0.5) * 6)); }
   ctx.clearRect(-8, -8, CONFIG.W + 16, view.h + 16);
   state.camX = state.home ? Math.max(0, Math.min(CONFIG.W, state.px - CONFIG.W / 2)) : 0;
-  state.camY = state.last ? Math.max(CONFIG.lastTop - 120, Math.min(0, state.py - view.h / 2)) : 0;   // Last Battle: the camera follows the boy up the map, keeping him mid-screen
+  state.camY = state.last ? lbCamY(state.py) : 0;   // Last Battle: the camera follows the boy up the map, keeping him mid-screen
   if (state.home) {
     ctx.save(); ctx.translate(-Math.round(state.camX), -Math.round(state.camY));
     for (let y = Math.floor(state.camY / bg.height) * bg.height; y < state.camY + view.h; y += bg.height) { ctx.drawImage(bg, 0, y); ctx.drawImage(bg, CONFIG.W, y); }
