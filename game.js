@@ -2789,9 +2789,9 @@ function drawLevels() {
   for (let n = 1; n <= CONFIG.storyLevels; n++) {
     const col = (n - 1) % 2, row = Math.floor((n - 1) / 2), ok = n <= state.storyUnlocked;
     const cx = CONFIG.W / 2 + (col ? 34 : -34), cy = 70 + row * (h + 8);
-    const next = n === state.storyUnlocked + 1;
-    if (!ok && !next) ctx.globalAlpha = 0.55;
-    button(String(n), cx, cy, 56, 1, ok ? (n === 1 ? startCutscene : () => startStory(n)) : () => {}, ok || next ? COLORS.hatGreen : COLORS.shadow, 1);
+    const next = n === state.storyUnlocked;
+    if (!ok) ctx.globalAlpha = 0.55;
+    button(String(n), cx, cy, 56, 1, ok ? (n === 1 ? startCutscene : () => startStory(n)) : () => {}, ok ? COLORS.hatGreen : COLORS.shadow, 1);
     ctx.globalAlpha = 1;
     if (next) {
       const x = Math.round(cx - 28) - 3, y = Math.round(cy - h / 2) - 3, w = 62, bh = h + 6;
@@ -2814,9 +2814,9 @@ function drawLevelPage(title, unlocked, start) {
   const h = btnH();
   for (let n = 1; n <= 10; n++) {
     const col = (n - 1) % 2, row = Math.floor((n - 1) / 2);
-    const cx = CONFIG.W / 2 + (col ? 34 : -34), cy = 70 + row * (h + 8), ok = n <= unlocked, next = n === unlocked + 1;
-    if (!ok && !next) ctx.globalAlpha = 0.55;
-    button(String(n), cx, cy, 56, 1, ok ? () => start(n) : () => {}, ok || next ? COLORS.hatGreen : COLORS.shadow, 1);
+    const cx = CONFIG.W / 2 + (col ? 34 : -34), cy = 70 + row * (h + 8), ok = n <= unlocked, next = n === unlocked;
+    if (!ok) ctx.globalAlpha = 0.55;
+    button(String(n), cx, cy, 56, 1, ok ? () => start(n) : () => {}, ok ? COLORS.hatGreen : COLORS.shadow, 1);
     ctx.globalAlpha = 1;
     if (next) {
       const x = Math.round(cx - 28) - 3, y = Math.round(cy - h / 2) - 3, w = 62, bh = h + 6;
