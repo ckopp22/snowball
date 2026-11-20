@@ -2378,13 +2378,11 @@ function drawCoopLobby() {
   if (host) drawText5('CHOOSE A MAP', cx, 66, 1, COLORS.night, 'center', COLORS.snow);
   else drawText5('HOST IS CHOOSING A MAP' + '.'.repeat(1 + Math.floor(performance.now() / 400) % 3), cx, 66, 1, COLORS.coatBlue, 'center', COLORS.snow);
   if (!host) ctx.globalAlpha = 0.55;                                   // guest sees the options but can't pick
-  const step = h + 18;
-  button('FORT', cx, 96, 110, 1, host ? () => startGame(false) : () => {});
-  button('RUNNER', cx, 96 + step, 110, 1, host ? () => startGame(true) : () => {}, COLORS.hatGreen, 1);
+  const bh = Math.max(h, 32), step = bh + 8, y0 = 84 + Math.ceil(bh / 2);
+  button('FORT', cx, y0, 110, bh / h, host ? () => startGame(false) : () => {}, undefined, undefined, 'BEST WAVE: ' + state.coopBests.fort);
+  button('RUNNER', cx, y0 + step, 110, bh / h, host ? () => startGame(true) : () => {}, COLORS.hatGreen, 1, 'BEST WAVE: ' + state.coopBests.runner);
   ctx.globalAlpha = 1;
-  drawBestLine('BEST WAVE: ' + state.coopBests.fort, 96 + Math.ceil(h / 2) + 3, 0);
-  drawBestLine('BEST WAVE: ' + state.coopBests.runner, 96 + step + Math.ceil(h / 2) + 3, 0.37);
-  button('LEAVE', cx, 96 + 2 * step, 90, 1, leaveCoop, COLORS.shadow, 1);
+  button('LEAVE', cx, y0 + 2 * step, 90, 1, leaveCoop, COLORS.shadow, 1);
 }
 
 function drawCoopHost() {
