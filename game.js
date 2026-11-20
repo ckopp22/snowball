@@ -1063,7 +1063,7 @@ function firstBullyHit(ax, ay, bx, by) {
 
 // ---- Power-ups ----
 const rand = (a, b) => a + Math.random() * (b - a);
-const MENU_MODES = ['title', 'levels', 'wavesmenu', 'wavetype', 'coopmenu', 'coophost', 'coopjoin'];
+const MENU_MODES = ['title', 'levels', 'wavesmenu', 'wavetype', 'coopmenu', 'coophost', 'coopjoin', 'cooplobby'];
 
 // Segment-vs-circle; returns t (0..1 along the snowball's path this frame) or null
 function firstPowerHit(ax, ay, bx, by) {
@@ -1493,6 +1493,8 @@ function resetNet() {
 }
 
 function leaveCoop() { resetNet(); state.entry = ''; resetGame(); setMode('title'); }
+// Co-op lobby: both players wait here after connecting and after each game; the host picks the map
+function enterLobby() { resetGame(); state.entry = ''; setMode('cooplobby'); }
 function backToCoopMenu() { resetNet(); state.entry = ''; setMode('coopmenu'); }
 function openCoopMenu() { state.runner = false; net.status = 'idle'; net.error = ''; setMode('coopmenu'); }
 
@@ -1518,7 +1520,7 @@ function hostGame(tries) {
     net.conn = conn;
     conn.on('open', () => {
       Object.assign(net, { role: 'host', localSlot: 0, lost: false, lastRx: performance.now(), evq: [], acc: 0 });
-      startGame(state.wantRunner);
+      enterLobby();
     });
     conn.on('data', hostOnData);
     conn.on('close', () => { if (net.conn === conn) net.lost = true; });
@@ -1606,6 +1608,10 @@ function guestOnData(d) {
 function applySnapshot(d) {
   const prev = state.mode;
   state.runner = !!d.rn;
+  if (d.m === 'cooplobby') {                                           // host is in the lobby: nothing to simulate
+    if (prev !== 'cooplobby') { resetGame(); state.entry = ''; setMode('cooplobby'); }
+    return;
+  }
   if (d.m === 'playing' && prev !== 'playing') { resetGame(); }        // first snapshot, or the host pressed Play Again
   if (d.m === 'gameover' && prev === 'playing') {
     endAim();
@@ -2299,7 +2305,7 @@ function drawWavesMenu() {
   drawText5('WAVES', CONFIG.W / 2, 50, 3, COLORS.coatBlue, 'center', COLORS.night);
   const h = btnH();
   button('SOLO', CONFIG.W / 2, 140, 100, 1, () => { state.typeCoop = false; setMode('wavetype'); });
-  button('CO-OP', CONFIG.W / 2, 140 + h + 8, 100, 1, () => { state.typeCoop = true; setMode('wavetype'); }, COLORS.ice, 1);
+  button('CO-OP', CONFIG.W / 2, 140 + h + 8, 100, 1, () => { state.typeCoop = true; openCoopMenu(); }, COLORS.ice, 1);
   button('BACK', CONFIG.W / 2, 140 + 2 * (h + 8), 76, 1, () => setMode('title'), COLORS.shadow, 1);
 }
 
@@ -2354,7 +2360,26 @@ function drawCoopMenu() {
   drawText5('TWO PLAYERS - ONE FORT', cx, 68, 1, COLORS.night, 'center', COLORS.snow);
   button('CREATE GAME', cx, 120, 160, 1.3, () => { setMode('coophost'); hostGame(); });
   button('JOIN GAME', cx, 120 + h + 10, 140, 1.3, () => { state.entry = ''; net.status = 'idle'; net.error = ''; setMode('coopjoin'); });
-  button('BACK', cx, 120 + 2 * (h + 10), 100, 1, () => setMode('title'), COLORS.ice);
+  button('BACK', cx, 120 + 2 * (h + 10), 100, 1, () => setMode('wavesmenu'), COLORS.ice);
+}
+
+function drawCoopLobby() {
+  const cx = CONFIG.W / 2, h = btnH();
+  drawText5('CO-OP', cx, 30, 3, COLORS.coatBlue, 'center', COLORS.night);
+  if (net.lost) {
+    drawText5('THE OTHER PLAYER LEFT', cx, 80, 1, COLORS.red, 'center', COLORS.snow);
+    button('LEAVE', cx, 120, 100, 1, leaveCoop, COLORS.ice);
+    return;
+  }
+  if (net.role === 'host') {
+    drawText5('CHOOSE A MAP', cx, 66, 1, COLORS.night, 'center', COLORS.snow);
+    button('FORT', cx, 100, 110, 1, () => startGame(false));
+    button('RUNNER', cx, 100 + h + 8, 110, 1, () => startGame(true), COLORS.hatGreen, 1);
+  } else {
+    const dots = '.'.repeat(1 + Math.floor(performance.now() / 400) % 3);
+    drawText5('HOST IS CHOOSING A MAP' + dots, cx, 90, 1, COLORS.coatBlue, 'center', COLORS.snow);
+  }
+  button('LEAVE', cx, net.role === 'host' ? 100 + 2 * (h + 8) + 8 : 140, 90, 1, leaveCoop, COLORS.shadow, 1);
 }
 
 function drawCoopHost() {
@@ -2435,7 +2460,8 @@ function drawGameOver() {
   else if (state.story) {
     button('RETRY', CONFIG.W / 2, 190, 150, 1.3, () => startStory(state.story.level));
     button('MENU', CONFIG.W / 2, 190 + Math.ceil(btnH() * 1.3) + 10, 100, 1, () => { resetGame(); state.story = null; setMode('levels'); }, COLORS.ice);
-  } else button('PLAY AGAIN', CONFIG.W / 2, 190, 150, 1.3, startGame);
+  } else if (isCoop()) button('LOBBY', CONFIG.W / 2, 190, 150, 1.3, enterLobby);
+  else button('PLAY AGAIN', CONFIG.W / 2, 190, 150, 1.3, startGame);
   if (isCoop()) button('MENU', CONFIG.W / 2, 190 + Math.ceil(btnH() * 1.3) + 10, 100, 1, leaveCoop, COLORS.ice);
 }
 
@@ -2541,6 +2567,7 @@ function draw() {
   else if (state.mode === 'coopmenu') withInset(drawCoopMenu);
   else if (state.mode === 'coophost') withInset(drawCoopHost);
   else if (state.mode === 'coopjoin') withInset(drawCoopJoin);
+  else if (state.mode === 'cooplobby') withInset(drawCoopLobby);
   else {
     withInset(drawHud);
     drawBanner();
