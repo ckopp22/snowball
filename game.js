@@ -97,9 +97,9 @@ const CONFIG = {
     big:     { speedMul: 0.6, hp: 2, points: 30, fortDamage: 2, radius: 8, halfH: 8, from: 5, weight: 2,  weightPer: 0.5, weightMax: 6 },
     sled:    { speedMul: 1.8, hp: 1, points: 25, fortDamage: 1, radius: 7, halfH: 6, from: 8, weight: 2,  weightPer: 0.5, weightMax: 5,
                swayAmp: 16, swayFreq: 0.35 }, // px and Hz of the side-to-side drift
-    // Snowball Thrower: Fort mode only (Story level 4+, endless wave 15+); stops at random moments to lob a snowball at the fort
+    // Snowball Thrower: Home mode only (Story level 4+, endless wave 15+); stops at random moments to lob a snowball at a window or the boy
     thrower: { speedMul: 0.8, hp: 1, points: 30, fortDamage: 1, radius: 6, halfH: 7, from: 1, weight: 2, weightPer: 0.3, weightMax: 4, throws: true },
-    // Snowmobile: Fort mode only (Story level 6+, endless wave 15+); races to a spot, drops off a random enemy, drives away. Hit first = it crashes and the rider is dropped there
+    // Snowmobile: Home mode only (Story level 6+, endless wave 15+); races to a window, drops off a random enemy, drives away. Hit first = it crashes and the rider is dropped there
     snowmobile: { speedMul: 3, hp: 1, points: 30, fortDamage: 0, radius: 8, halfH: 7, from: 1, weight: 1.5, weightPer: 0.3, weightMax: 3, drives: true },
     // Yeti: not part of the random mix (special); a fixed number of them is slipped into each wave from wave 11
     yeti:    { speedMul: 0.7, hp: 5, points: 100, fortDamage: 4, radius: 10, halfH: 10, from: 11, weight: 0, weightPer: 0, weightMax: 0, special: true },
@@ -1042,10 +1042,10 @@ function startWave(n) {
 
 let bullyId = 0;
 
-// Throwers only show up in Fort mode: Story level 4+, or endless wave 15+ (not co-op)
-const fortOk = (wave, lvl) => !state.runner && !state.home && !isCoop() && (state.story ? state.story.level >= lvl : wave >= 15);
-const throwerOk = wave => fortOk(wave, 4);
-const snowmobileOk = wave => fortOk(wave, 6);
+// Throwers and snowmobiles only show up in Home mode: Story level 4+ / 6+, or endless wave 15+ (not co-op)
+const homeOk = (wave, lvl) => state.home && !isCoop() && (state.story ? state.story.level >= lvl : wave >= 15);
+const throwerOk = wave => homeOk(wave, 4);
+const snowmobileOk = wave => homeOk(wave, 6);
 
 // Weighted random type: newer types get likelier as waves rise, Regular stays the most common
 function pickType(wave) {
@@ -1109,7 +1109,7 @@ function spawnBully(rtype, rx, ry) {   // rtype/rx/ry: place a specific enemy (a
     stepSide: 1,
     flash: 0,
     ph: Math.random() * 10, // walk-cycle / sway offset
-    rider: T.drives ? pickRider() : undefined, stopY: rand(60, 110), dropped: false,   // snowmobile: its passenger and where it stops
+    rider: T.drives ? pickRider() : undefined, dropped: false, sx: x0, sy: y0, bw: Math.random() < 0.5 ? 0 : 1,   // snowmobile: its passenger, start point and target window
   });
 }
 
@@ -1376,18 +1376,19 @@ function updateBullies(dt) {
   for (let i = state.bullies.length - 1; i >= 0; i--) {
     const b = state.bullies[i], T = CONFIG.bullyTypes[b.type];
     if (b.flash > 0) b.flash -= dt;
-    if (b.state === 'walking' && state.home) {
-      if (updateHomeBully(b, T, dt)) { state.bullies.splice(i, 1); damageFort(T.fortDamage); }
+    if (b.state === 'walking' && T.drives) {               // Snowmobile: races to its window, drops the rider, drives back to where it came from
+      const wy = homeWallY(), gx = b.dropped ? b.sx : state.wins[b.bw].x, gy = b.dropped ? b.sy : wy - 26;
+      const dx = gx - b.x, dy = gy - b.y, d = Math.hypot(dx, dy), step = b.speed * dt;
+      b.ang = Math.atan2(dy, dx);
+      if (d <= step) {
+        b.x = gx; b.y = gy;
+        if (b.dropped) { state.bullies.splice(i, 1); continue; }
+        b.dropped = true; spawnBully(b.rider, b.x, wy - 20); puff(b.x, wy - 20);
+      } else { b.x += dx / d * step; b.y += dy / d * step; }
+      b.x0 = b.x; b.vx = dx / (d || 1) * b.speed; b.vy = dy / (d || 1) * b.speed;
       continue;
     }
-    if (b.state === 'walking' && T.drives) {               // Snowmobile: straight down to its stop, drop the rider, drive back off the top
-      if (!b.dropped && b.y >= b.stopY) { b.dropped = true; spawnBully(b.rider, b.x, b.y + 8); puff(b.x, b.y + 8); }
-      b.y += (b.dropped ? -1 : 1) * b.speed * dt;
-      b.vx = 0; b.vy = (b.dropped ? -1 : 1) * b.speed;
-      if (b.dropped && b.y < -T.halfH - 4) state.bullies.splice(i, 1);
-      continue;
-    }
-    if (b.state === 'walking' && T.throws && b.y > 8) {   // Thrower: walks, then stops now and then to lob a snowball at the fort
+    if (b.state === 'walking' && T.throws && state.home && (b.phase === 0 || b.phase === 4) && b.y > 8) {   // Thrower: walks, then stops now and then to throw
       if (b.pause > 0) {
         b.pause -= dt; b.vx = b.vy = 0;
         if (!b.thrown && b.pause < 0.4) { b.thrown = true; throwBall(b); }
@@ -1395,6 +1396,10 @@ function updateBullies(dt) {
         continue;
       }
       if ((b.walk = (b.walk === undefined ? rand(1, 2.5) : b.walk) - dt) <= 0) { b.pause = 0.9; b.thrown = false; continue; }
+    }
+    if (b.state === 'walking' && state.home) {
+      if (updateHomeBully(b, T, dt)) { state.bullies.splice(i, 1); damageFort(T.fortDamage); }
+      continue;
     }
     if (b.state === 'walking') {
       b.age += dt;
@@ -1437,18 +1442,37 @@ function updateBullies(dt) {
   }
 }
 
-function throwBall(b) {
-  const a = Math.atan2(CONFIG.fortCY - b.y, CONFIG.fortCX - b.x), v = 90;
-  state.enemyBalls.push({ x: b.x + 5, y: b.y - 6, vx: Math.cos(a) * v, vy: Math.sin(a) * v });
+function throwBall(b) {              // at the nearest window or the nearest boy
+  const wy = homeWallY() + 5, boys = slots().map(pl);
+  let tx, ty, tgt = 'boy', wi = 0;
+  if (Math.random() < 0.5) {
+    tgt = 'win'; wi = Math.abs(state.wins[0].x - b.x) <= Math.abs(state.wins[1].x - b.x) ? 0 : 1;
+    tx = state.wins[wi].x; ty = wy;
+  } else {
+    let p = boys[0];
+    for (const q of boys) if (Math.hypot(q.px - b.x, q.py - b.y) < Math.hypot(p.px - b.x, p.py - b.y)) p = q;
+    tx = p.px; ty = p.py;
+  }
+  const a = Math.atan2(ty - b.y, tx - b.x), v = 110;
+  state.enemyBalls.push({ x: b.x + 5, y: b.y - 6, vx: Math.cos(a) * v, vy: Math.sin(a) * v, tgt, wi });
   sfx('throw');
 }
 
+// Thrown snowballs: the house wall stops them unless they fly through a window or the open door; a ball aimed at a window chips its boards; any ball reaching a boy hurts
 function updateEnemyBalls(dt) {
+  const wy = homeWallY() + 5;
   for (let i = state.enemyBalls.length - 1; i >= 0; i--) {
-    const e = state.enemyBalls[i];
+    const e = state.enemyBalls[i], px = e.x, py = e.y;
     e.x += e.vx * dt; e.y += e.vy * dt;
-    if (Math.hypot(e.x - CONFIG.fortCX, e.y - CONFIG.fortCY) <= CONFIG.fortOuter) { puff(e.x, e.y); state.enemyBalls.splice(i, 1); damageFort(1); }
-    else if (e.y > CONFIG.H + 10 || e.x < -10 || e.x > CONFIG.W + 10 || e.y < -10) state.enemyBalls.splice(i, 1);
+    if ((py - wy) * (e.y - wy) < 0) {
+      const xc = px + (e.x - px) * (py - wy) / (py - e.y);
+      const w = state.wins.find(q => Math.abs(xc - q.x) <= CONFIG.homeWinHalf - 1);
+      if (!w && !(state.door.open && Math.abs(xc - state.door.x) <= 7)) { puff(xc, wy); state.enemyBalls.splice(i, 1); continue; }
+      if (w && e.tgt === 'win') { w.hp = Math.max(0, w.hp - 1.5); puff(xc, wy); sfx('fort'); state.enemyBalls.splice(i, 1); continue; }
+    }
+    const hit = slots().map(pl).some(p => Math.hypot(e.x - p.px, e.y - p.py) <= 6);
+    if (hit) { puff(e.x, e.y); state.enemyBalls.splice(i, 1); damageFort(1); }
+    else if (e.y > view.h + 10 || e.x < -10 || e.x > CONFIG.W * 2 + 10 || e.y < -10) state.enemyBalls.splice(i, 1);
   }
 }
 
