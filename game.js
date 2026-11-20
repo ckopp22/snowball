@@ -2585,6 +2585,43 @@ function draw() {
   if (updateReady && state.mode !== 'playing') drawUpdateBanner();
 }
 
+// Title-screen background: one enemy at a time walks down, the boy snowballs it, then the next one comes
+let demoGap = 0.6;
+function updateMenuDemo(dt) {
+  if (state.cooldown > 0) state.cooldown = Math.max(0, state.cooldown - dt);
+  if (state.swing > 0) state.swing = Math.max(0, state.swing - dt);
+  updateBullies(dt);
+  updateParticles(dt);
+  const sbs = state.snowballs;
+  for (let i = sbs.length - 1; i >= 0; i--) {
+    const s = sbs[i], px = s.x, py = s.y;
+    s.x += s.vx * dt; s.y += s.vy * dt;
+    const bh = firstBullyHit(px, py, s.x, s.y), th = firstTreeHit(px, py, s.x, s.y);
+    if (bh && (!th || bh.t <= th.t)) { bh.b.state = 'falling'; bh.b.t = 0; puff(bh.b.x, bh.b.y); sbs.splice(i, 1); }
+    else if (th) { puff(th.x, th.y); sbs.splice(i, 1); }
+    else if (s.y < -8 || s.x < -8 || s.x > CONFIG.W + 8) sbs.splice(i, 1);
+  }
+  if (state.bullies.length === 0) {
+    if ((demoGap -= dt) > 0) return;
+    const w = state.wave, y = state.yetiLeft;
+    state.wave = 3; state.yetiLeft = 0; spawnBully(); state.wave = w; state.yetiLeft = y;
+    state.popup = null;
+    demoGap = 0.6 + Math.random() * 0.9;
+    return;
+  }
+  const b = state.bullies.find(e => e.state === 'walking');
+  if (!b) return;
+  if (b.y > CONFIG.turnY + 20) { b.state = 'falling'; b.t = 0; puff(b.x, b.y); return; }   // a tree blocked the shots: just flop
+  if (b.y < 40 || state.cooldown > 0 || sbs.length) return;
+  const h = handPos(0), d = Math.hypot(b.x - h.x, b.y - h.y), tt = d / CONFIG.snowballSpeed;
+  const tx = b.x + b.vx * tt, ty = b.y + b.vy * tt;
+  const ang = Math.min(CONFIG.maxAngle, Math.max(CONFIG.minAngle, Math.atan2(h.y - ty, tx - h.x) / DEG));
+  state.aimAngle = ang;
+  const a = ang * DEG;
+  sbs.push({ x: h.x, y: h.y, owner: 0, auto: false, vx: Math.cos(a) * CONFIG.snowballSpeed, vy: -Math.sin(a) * CONFIG.snowballSpeed });
+  state.cooldown = CONFIG.throwCooldown; state.swing = CONFIG.armSwingTime;
+}
+
 // ---------- Loop ----------
 let last = performance.now();
 function frame(now) {
@@ -2596,7 +2633,8 @@ function frame(now) {
   else if (state.mode !== 'paused') updateFlakes(dt);   // snow keeps falling on menus / game over
   if (state.mode === 'splash' && (splashT += dt) >= SPLASH_TIME) setMode('title');
   if (isCoop()) netTick(dt);
-  if (state.mode === 'title') updateProgress(dt);
+  if (state.mode === 'title') { updateProgress(dt); updateMenuDemo(dt); }
+  else if (MENU_MODES.includes(state.mode) && (state.bullies.length || state.snowballs.length)) { state.bullies = []; state.snowballs = []; state.swing = state.cooldown = 0; }
   if (state.mode !== 'paused') updateCelebration(dt);
   ctx.imageSmoothingEnabled = false;
   draw();
