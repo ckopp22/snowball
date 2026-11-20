@@ -693,7 +693,7 @@ const HOME_PERKS = [
   { id: 'avalanche', name: 'AVALANCHE', x: 150, cost: 1000 },
   { id: 'gun', name: 'MACHINE GUN', x: 210, cost: 500 },
   { id: 'door', name: 'DOOR', x: 240, cost: 500 },
-  { id: 'checkpoint', name: 'CHECKPOINT', x: 325, cost: 500 },
+  { id: 'checkpoint', name: 'CHECKPOINT', x: CONFIG.homeR - 6, dy: 24, side: true, cost: 500 },
 ];
 const checkpointTarget = () => Math.floor(state.wave / 5) * 5 + 5;   // next multiple of 5 above the current wave
 const checkpointOk = () => checkpointTarget() <= (isCoop() ? state.coopBests : state.bests)[mapKind()];   // only waves reached before
@@ -804,7 +804,7 @@ function update(dt) {
       const wy = homeWallY() + 5;
       if ((py - wy) * (s.y - wy) < 0) {
         const xc = px + (s.x - px) * (py - wy) / (py - s.y);
-        const pk = HOME_PERKS.find(p => Math.abs(xc - p.x) <= 9 && Math.abs(state.px - p.x) <= 16);   // must be standing in front of it
+        const pk = HOME_PERKS.find(p => !p.side && Math.abs(xc - p.x) <= 9 && Math.abs(state.px - p.x) <= 16);   // must be standing in front of it
         if (pk && s.auto) { puff(xc, wy); state.snowballs.splice(i, 1); continue; }   // machine-gun shots never open the buy screen
         if (pk) { puff(xc, wy); sfx('clank'); state.snowballs.splice(i, 1); askPerk(pk.id); continue; }
         const gap = state.wins.some(w => Math.abs(xc - w.x) <= CONFIG.homeWinHalf - 1) || (state.door.open && Math.abs(xc - state.door.x) <= 7);
@@ -812,6 +812,8 @@ function update(dt) {
       }
     }
     if (state.home && s.y > homeWallY() + 5 && (s.x < CONFIG.homeL + 12 || s.x > CONFIG.homeR - 12)) {   // end walls
+      const sp = HOME_PERKS.find(p => p.side), spy = homeWallY() + sp.dy;
+      if (!s.auto && s.x > CONFIG.homeR - 12 && state.px > CONFIG.homeR - 70 && s.y >= spy - 2 && s.y <= spy + 12) { puff(s.x, s.y); sfx('clank'); state.snowballs.splice(i, 1); askPerk(sp.id); continue; }
       puff(s.x, s.y); state.snowballs.splice(i, 1); continue;
     }
     const bh = firstBullyHit(px, py, s.x, s.y), th = firstTreeHit(px, py, s.x, s.y), ph = firstPowerHit(px, py, s.x, s.y);
@@ -1821,6 +1823,11 @@ function drawPerkPlaques() {
   const wy = homeWallY();
   for (const p of HOME_PERKS) {
     if (state.perks[p.id]) ctx.globalAlpha = 0.45;
+    if (p.side) {                                   // on the right end wall, facing the player
+      rect(COLORS.gold, p.x - 5, wy + p.dy, 10, 10); rect('#2b1d10', p.x - 4, wy + p.dy + 1, 8, 8);
+      perkIcon(p.id, p.x, wy + p.dy + 5, 1);
+      ctx.globalAlpha = 1; continue;
+    }
     rect(COLORS.gold, p.x - 8, wy + 1, 16, 8);
     rect('#2b1d10', p.x - 7, wy + 2, 14, 6);
     perkIcon(p.id, p.x, wy + 5, 1);
