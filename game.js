@@ -921,8 +921,6 @@ function resetGame() {
 function setMode(m) { endAim(); state.stick = null; if (MENU_MODES.includes(m)) state.runner = state.home = state.last = false; if (state.mode === 'paused' && m === 'playing') state.resumeAt = performance.now(); state.mode = m; }
 
 // DEBUG (easy to remove): open index.html?wave=8 to start at wave 8
-// DEBUG (easy to remove): open index.html?unlock=1 to show every Fort and Runner level as cleared (not saved)
-if (new URLSearchParams(location.search).get('unlock')) state.storyUnlocked = state.runnerUnlocked = state.homeUnlocked = CONFIG.storyLevels + 1;
 const DEBUG_START_WAVE = parseInt(new URLSearchParams(location.search).get('wave'), 10) || 1;
 
 function startGame(kind) {
