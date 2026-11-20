@@ -126,8 +126,8 @@ const CONFIG = {
   // UI
   btnMinPx: 44,           // minimum on-screen button height in CSS px
   btnMinInternal: 24,     // minimum button height in internal px
-  storageKey: 'snowball_highscore',
-  coopStorageKey: 'snowball_coop_highscore',   // co-op has its own best score
+  storageKey: 'snowball_bestwave',            // best wave reached (solo, per map)
+  coopStorageKey: 'snowball_coop_bestwave',   // co-op has its own best wave
   storyKey: 'snowball_story',                   // highest Story level unlocked
   storyLevels: 10,        // Story campaign: each level is one wave (pass or fail); level n uses wave 2n-1's difficulty
   progressKey: 'snowball_progress',             // { level, xp } saved on this device
@@ -496,7 +496,7 @@ const state = {
   prints: [],          // footprints: { x, y, t, w }
   buttons: [],         // rebuilt every frame by the draw code, used for tap tests
   score: 0,
-  bests: { fort: loadBest(), runner: loadBest('snowball_highscore_runner'), home: loadBest('snowball_highscore_home') },   // solo best per map
+  bests: { fort: loadBest(), runner: loadBest(CONFIG.storageKey + '_runner'), home: loadBest(CONFIG.storageKey + '_home') },   // solo best per map
   coopBests: { fort: loadBest(CONFIG.coopStorageKey), runner: loadBest(CONFIG.coopStorageKey + '_runner') },   // co-op best per map
   story: null,         // { level, last } while a Story level is running
   storyUnlocked: loadStory(),
@@ -1448,7 +1448,7 @@ const mapKind = () => (state.home ? 'home' : state.runner ? 'runner' : 'fort');
 const bestKey = k => (k === 'fort' ? CONFIG.storageKey : CONFIG.storageKey + '_' + k);
 const coopKey = k => (k === 'fort' ? CONFIG.coopStorageKey : CONFIG.coopStorageKey + '_' + k);
 const bestNow = () => (isCoop() ? state.coopBests[mapKind()] : state.bests[mapKind()]);
-function recordBest(score) {
+function recordBest(score) {          // 'score' here is the wave reached
   if (isCoop()) {
     const k = mapKind();
     state.newBest = score > state.coopBests[k];
@@ -1462,7 +1462,7 @@ function recordBest(score) {
 
 function gameOver() {
   endAim();
-  if (!state.story) recordBest(state.score);
+  if (!state.story) recordBest(state.wave);
   awardXp(state.score);
   state.mode = 'gameover';
   sfx('over');
@@ -1617,7 +1617,7 @@ function applySnapshot(d) {
   if (d.m === 'playing' && prev !== 'playing') { resetGame(); }        // first snapshot, or the host pressed Play Again
   if (d.m === 'gameover' && prev === 'playing') {
     endAim();
-    recordBest(d.sc);
+    recordBest(d.w);
     awardXp(d.sc);
   }
   state.mode = d.m;
@@ -2109,7 +2109,7 @@ function drawHud() {
   ctx.globalAlpha = 1;
   drawText('SCORE ' + state.score, 3, 3, 1, COLORS.snow);
   drawText(state.story ? 'LEVEL ' + state.story.level : 'WAVE ' + state.wave, CONFIG.W / 2, 3, 1, COLORS.snow, 'center');
-  drawText('BEST ' + Math.max(bestNow(), state.score), CONFIG.W - 3, 3, 1, COLORS.snow, 'right');
+  drawText('BEST WAVE ' + Math.max(bestNow(), state.wave), CONFIG.W - 3, 3, 1, COLORS.snow, 'right');
   for (let i = 0; i < CONFIG.fortHealth; i++) drawFlake(3 + i * 6, 14, i < state.health);
   if (state.gun > 0) drawTextShadow('GUN ' + Math.ceil(state.gun), 3, 24, 1, COLORS.coatBlue);
   if (state.home && state.mode === 'playing') button('+1000', 3 + 28, 36 + Math.ceil(btnH() / 2), 56, 1, () => { state.score += 1000; }, COLORS.ice, 1);   // TEST: remove later
@@ -2318,7 +2318,7 @@ function drawWaveType() {
   let cy = solo ? 92 : 110;
   const row = (label, kind, color, gap) => {
     button(label, CONFIG.W / 2, cy, 110, 1, () => chooseWaveType(kind), color, gap);
-    if (solo) drawBestLine('BEST: ' + state.bests[kind === true ? 'runner' : kind === 'home' ? 'home' : 'fort'], cy + Math.ceil(h / 2) + 3, cy / 100);
+    if (solo) drawBestLine('BEST WAVE: ' + state.bests[kind === true ? 'runner' : kind === 'home' ? 'home' : 'fort'], cy + Math.ceil(h / 2) + 3, cy / 100);
     cy += step;
   };
   row('FORT', false);
@@ -2381,8 +2381,8 @@ function drawCoopLobby() {
   button('FORT', cx, 96, 110, 1, host ? () => startGame(false) : () => {});
   button('RUNNER', cx, 96 + step, 110, 1, host ? () => startGame(true) : () => {}, COLORS.hatGreen, 1);
   ctx.globalAlpha = 1;
-  drawBestLine('BEST: ' + state.coopBests.fort, 96 + Math.ceil(h / 2) + 3, 0);
-  drawBestLine('BEST: ' + state.coopBests.runner, 96 + step + Math.ceil(h / 2) + 3, 0.37);
+  drawBestLine('BEST WAVE: ' + state.coopBests.fort, 96 + Math.ceil(h / 2) + 3, 0);
+  drawBestLine('BEST WAVE: ' + state.coopBests.runner, 96 + step + Math.ceil(h / 2) + 3, 0.37);
   button('LEAVE', cx, 96 + 2 * step, 90, 1, leaveCoop, COLORS.shadow, 1);
 }
 
@@ -2457,7 +2457,7 @@ function drawGameOver() {
   dim();
   drawTextShadow('GAME OVER', CONFIG.W / 2, 50, 3, COLORS.snow, 'center');
   drawTextShadow('SCORE: ' + state.score, CONFIG.W / 2, 92, 2, COLORS.snow, 'center');
-  drawTextShadow('BEST: ' + bestNow(), CONFIG.W / 2, 112, 2, COLORS.snow, 'center');
+  drawTextShadow('BEST WAVE: ' + bestNow(), CONFIG.W / 2, 112, 2, COLORS.snow, 'center');
   if (state.newBest) drawTextShadow('NEW BEST!', CONFIG.W / 2, 136, 2, COLORS.gold, 'center');
   if (state.lastXp > 0) drawText5('+' + state.lastXp + ' TO YOUR LEVEL BAR', CONFIG.W / 2, 160, 1, COLORS.snow, 'center', COLORS.night);
   if (net.role === 'guest') drawTextShadow('WAITING FOR HOST...', CONFIG.W / 2, 184, 1, COLORS.snow, 'center');
