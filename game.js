@@ -977,7 +977,7 @@ function updateLastBattle(dt) {
   const live = state.bullies.filter(b => !b.guard && b.state === 'walking').length;
   if (state.lbWave < LB_WAVES) {
     if (state.lbLeft > 0) {
-      if ((state.spawnTimer -= dt) <= 0) { state.lbLeft--; state.spawnTimer = rand(1.2, 2); if (++state.lastN % 12 === 0 && !state.bullies.some(b => b.type === 'yeti' && b.state === 'walking')) { state.yetiLeft = 1; state.toSpawn = 1; } spawnBully(); }
+      if ((state.spawnTimer -= dt) <= 0) { state.lbLeft--; state.spawnTimer = rand(1.2, 2); if (++state.lastN % 12 === 0) { state.yetiLeft = 1; state.toSpawn = 1; } spawnBully(); }
     } else if (live === 0) {            // wave beaten: the way north opens a little
       state.lbWave++;
       state.lbLimit = LB_LIM0() + (LB_LIMF() - LB_LIM0()) * state.lbWave / LB_WAVES;
@@ -996,7 +996,7 @@ function updateLastBattle(dt) {
   }
   state.spawnTimer = rand(2, 3.2);
   if (live >= 10) return;
-  if (++state.lastN % 12 === 0 && !state.bullies.some(b => b.type === 'yeti' && b.state === 'walking')) { state.yetiLeft = 1; state.toSpawn = 1; }
+  if (++state.lastN % 12 === 0) { state.yetiLeft = 1; state.toSpawn = 1; }
   spawnBully();
 }
 
