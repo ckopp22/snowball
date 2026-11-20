@@ -975,12 +975,45 @@ function updateCastleWin(dt) {
   updateParticles(dt);
   if (net.role === 'guest') return;
   if (state.cwT < 2.6 && Math.random() < dt * 14) puff(CONFIG.W + rand(-70, 70), CONFIG.lastTop - rand(0, 40), ['#6e7a8a', COLORS.snow]);
-  if (state.cwT >= 9) { if (isCoop()) enterLobby(); else { resetGame(); setMode('title'); } }
+  if (state.cwT >= END_T.out + 1.5) { if (isCoop()) enterLobby(); else { resetGame(); setMode('title'); } }
+}
+
+// Ending timeline (seconds since the Castle fell): victory text, fade to black, "return home" text, the boy walks back down and stops, the screen shakes with the last line, fade out to the menu
+const END_T = { fade: 5.5, black: 6.5, textOut: 10, scene: 10.5, stop: 14, shake: 15.2, line2: 14.6, out: 18 };
+const fadeIn = (t, a, d) => Math.max(0, Math.min(1, (t - a) / d));
+
+function drawEnding() {
+  const t = state.cwT, W = CONFIG.W, H = view.h, T = END_T;
+  state.buttons = [];
+  if (t < T.scene) {
+    rect(COLORS.black, 0, 0, W, H);
+    ctx.globalAlpha = Math.min(fadeIn(t, T.black + 0.3, 0.8), 1 - fadeIn(t, T.textOut, 0.5));
+    for (const [i, line] of ['YOU ARE ABLE TO RETURN', 'BACK HOME TO YOUR', 'PEACEFUL LIFE...'].entries()) drawText5(line, W / 2, H / 2 - 16 + i * 12, 1, COLORS.snow, 'center');
+    ctx.globalAlpha = 1;
+    return;
+  }
+  const shaking = t > T.stop && t < T.shake;
+  ctx.save();
+  if (shaking) ctx.translate(Math.round((Math.random() - 0.5) * 6), Math.round((Math.random() - 0.5) * 6));
+  ctx.drawImage(bg, 0, 0);
+  drawFlakes();
+  const k = Math.min(1, (t - T.scene) / (T.stop - T.scene)), y = Math.round(-14 + (H / 2 - 7 + 14) * k);
+  drawKidAt(Math.round(W / 2 - 4), y, 0, k >= 1 ? breath(0) : 0, k >= 1 ? 0 : 1 + (Math.floor(t * 8) % 2));
+  if (t >= T.line2) {
+    ctx.globalAlpha = fadeIn(t, T.line2, 0.6);
+    drawText5('...UNTIL YOU NEED TO', W / 2, H / 2 + 30, 1, COLORS.night, 'center', COLORS.snow);
+    drawText5('MAKE ANOTHER SNOWBALL...', W / 2, H / 2 + 42, 1, COLORS.night, 'center', COLORS.snow);
+    ctx.globalAlpha = 1;
+  }
+  ctx.restore();
+  const a = Math.max(1 - fadeIn(t, T.scene, 0.8), fadeIn(t, T.out, 1.5));   // black fades off at the start of the scene, back on at the end
+  if (a > 0) { ctx.globalAlpha = a; rect(COLORS.black, 0, 0, W, H); ctx.globalAlpha = 1; }
 }
 
 function drawCastleWin() {
+  if (state.cwT > END_T.fade) { ctx.globalAlpha = fadeIn(state.cwT, END_T.fade, 1); rect(COLORS.black, 0, 0, CONFIG.W, view.h); ctx.globalAlpha = 1; }
   if (state.cwT < 1) return;
-  ctx.globalAlpha = Math.min(1, (state.cwT - 1) / 0.6);
+  ctx.globalAlpha = fadeIn(state.cwT, 1, 0.6) * (1 - fadeIn(state.cwT, END_T.fade, 1));
   drawTextShadow('YOU BEAT THE', CONFIG.W / 2, 90, 2, COLORS.gold, 'center');
   drawTextShadow('EVIL SNOW FORCE', CONFIG.W / 2, 112, 2, COLORS.gold, 'center');
   ctx.globalAlpha = 1;
@@ -2950,6 +2983,7 @@ function drawFrame() {
   if (state.mode === 'splash') { drawSplash(); return; }
   if (logoEl && logoEl.parentNode) logoEl.remove();
   if (state.mode === 'runpan') { drawRunPan(); return; }
+  if (state.mode === 'castlewin' && state.cwT >= END_T.black) { drawEnding(); return; }
   const cut = state.mode === 'cutscene';
   const shaking = cut && state.cut.t > CUT.shake && state.cut.t < CUT.shake + 1.2;
   if (shaking) { ctx.save(); ctx.translate(Math.round((Math.random() - 0.5) * 6), Math.round((Math.random() - 0.5) * 6)); }
