@@ -693,7 +693,7 @@ const HOME_PERKS = [
   { id: 'avalanche', name: 'AVALANCHE', x: 150, cost: 1000 },
   { id: 'gun', name: 'MACHINE GUN', x: 210, cost: 500 },
   { id: 'door', name: 'DOOR', x: 240, cost: 500 },
-  { id: 'checkpoint', name: 'CHECKPOINT', x: CONFIG.homeR - 6, dy: 24, side: true, cost: 500 },
+  { id: 'checkpoint', name: 'CHECKPOINT', x: CONFIG.homeR - 6, dy: 16, side: true, cost: 500 },
 ];
 const checkpointTarget = () => Math.floor(state.wave / 5) * 5 + 5;   // next multiple of 5 above the current wave
 const checkpointOk = () => checkpointTarget() <= (isCoop() ? state.coopBests : state.bests)[mapKind()];   // only waves reached before
