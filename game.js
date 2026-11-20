@@ -2422,7 +2422,7 @@ function drawLevels() {
 // Once all Fort levels are cleared, an arrow beside the boy leads on to the Runner levels
 function drawRunnerArrow() {
   if (state.storyUnlocked <= CONFIG.storyLevels) return;
-  const bx = CONFIG.kidX + 30, by = CONFIG.kidY + 7;
+  const bx = CONFIG.kidX + 46, by = CONFIG.kidY + 7;
   button('', bx, by, 28, 1, () => { state.pan = { t: 0 }; setMode('runpan'); }, COLORS.gold, 1);
   for (let i = 0; i < 5; i++) rect(COLORS.night, bx - 5 + i * 2, by - (5 - i), 2, 10 - i * 2);   // right-pointing triangle
 }
@@ -2450,22 +2450,27 @@ function drawRunnerLevels() {
 function drawRunnerBoy(dx, arrow) {
   drawKidAt(CONFIG.kidX + dx, CONFIG.kidY, 0, breath(0), 0);
   if (!arrow) return;
-  const bx = CONFIG.kidX - 22, by = CONFIG.kidY + 7;
-  button('', bx, by, 28, 1, () => setMode('levels'), COLORS.gold, 1);
+  const bx = CONFIG.kidX - 38, by = CONFIG.kidY + 7;
+  button('', bx, by, 28, 1, () => { state.pan = { t: 0, back: true }; setMode('runpan'); }, COLORS.gold, 1);
   for (let i = 0; i < 5; i++) rect(COLORS.night, bx + 5 - i * 2 - 1, by - (5 - i), 2, 10 - i * 2);   // left-pointing triangle
 }
 
 function drawRunPan() {
-  const t = state.pan.t, W = CONFIG.W, k = Math.min(1, Math.max(0, (t - RUN_T) / PAN_T));
-  const off = Math.round((k * k * (3 - 2 * k)) * W);
+  const { t, back } = state.pan, W = CONFIG.W, k = Math.min(1, Math.max(0, (t - RUN_T) / PAN_T)), e = k * k * (3 - 2 * k);
+  const off = Math.round((back ? 1 - e : e) * W);        // forward pans right to the Runner screen, back pans left to the Fort
   ctx.drawImage(bg, -off, 0); ctx.drawImage(bg, W - off, 0);
   drawFlakes();
   ctx.save(); ctx.translate(-off, 0); drawTreesAndBullies(); drawFort(); ctx.restore();
   ctx.save(); ctx.translate(W - off, 0); drawTreesAndBullies(); ctx.restore();
-  const bx = Math.round(CONFIG.kidX + (W + 16 - CONFIG.kidX) * Math.min(1, t / RUN_T)) - off;
-  drawKidAt(bx, CONFIG.kidY, 0, 0, 1 + (Math.floor(t * 10) % 2));
+  const r = Math.min(1, t / RUN_T), step = 1 + (Math.floor(t * 10) % 2);
+  if (back) {
+    drawKidAt(Math.round(W + CONFIG.kidX - (CONFIG.kidX + 16) * r) - off, CONFIG.kidY, 0, 0, t < RUN_T ? step : 0);   // runs off the left edge of the Runner screen
+    if (t >= RUN_T) drawKidAt(CONFIG.kidX - off, CONFIG.kidY, 0, breath(0), 0);                                       // the Fort boy slides in
+  } else {
+    drawKidAt(Math.round(CONFIG.kidX + (W + 16 - CONFIG.kidX) * r) - off, CONFIG.kidY, 0, 0, step);
+    drawRunnerBoy(W - off, false);
+  }
   ctx.save(); ctx.translate(W - off, 0); withInset(drawRunnerLevels); ctx.restore();
-  drawRunnerBoy(W - off, false);
   state.buttons = [];
 }
 
@@ -2760,7 +2765,7 @@ function frame(now) {
   if (net.role === 'guest' && (state.mode === 'playing' || state.mode === 'gameover')) updateGuest(dt);   // the host runs the world
   else if (state.mode === 'playing') update(dt);
   else if (state.mode === 'cutscene') { updateFlakes(dt); updateCutscene(dt); }
-  else if (state.mode === 'runpan') { updateFlakes(dt); if ((state.pan.t += dt) >= RUN_T + PAN_T) setMode('runnerlevels'); }
+  else if (state.mode === 'runpan') { updateFlakes(dt); if ((state.pan.t += dt) >= RUN_T + PAN_T) setMode(state.pan.back ? 'levels' : 'runnerlevels'); }
   else if (state.mode !== 'paused') updateFlakes(dt);   // snow keeps falling on menus / game over
   if (state.mode === 'splash' && (splashT += dt) >= SPLASH_TIME) setMode('title');
   if (isCoop()) netTick(dt);
