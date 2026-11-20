@@ -27,7 +27,7 @@ const CONFIG = {
   homeRepairDist: 20,
   homeL: 20, homeR: 340,  // the house spans these world x's; its 12 px end walls are inside, snow outside
   castleHp: 60,           // Last Battle: snowball hits to bring the Castle down
-  castleGuards: 6,        // enemies standing guard in front of it
+  castleGuards: 4,        // enemies standing guard in front of it
   lastTop: -900,          // Last Battle: world y of the Castle's base (the map runs from the house up to here)
   homeWinHalf: 22,        // half the window opening width
   stickRadius: 18,        // px the joystick knob can travel from where the thumb landed
@@ -558,7 +558,8 @@ const state = {
   perks: {},           // owned home perks { id: true }
   ask: null,           // perk id being confirmed
   camX: 0, camY: 0,
-  castleHp: 0, cwT: 0, lastN: 0, guardT: 0,   // Last Battle: Castle health, win-sequence clock, spawn counter, guard refill timer
+  castleHp: 0, cwT: 0, lastN: 0, guardT: 0, lbWave: 0, lbLeft: 0, lbLimit: 0,   // + Last Battle waves cleared, enemies left in this wave, and how far north the boy may go for now
+     // Last Battle: Castle health, win-sequence clock, spawn counter, guard refill timer
   walkT: 0,
   hurt: 0,             // timer: kid flashes red and bounces when the fort / player is hit
   px: 90, py: 200,     // runner position (centre of the kid)
@@ -769,7 +770,7 @@ const homeWalkable = (x, y) => {            // where the boy may stand (door ope
   const wy = homeWallY(), L = CONFIG.homeL + 18, R = CONFIG.homeR - 18;
   if (y >= wy + 18 && y <= wy + 54) return x >= L && x <= R;                                   // floor
   if (Math.abs(x - state.door.x) <= 5 && y >= wy - 8 && y <= wy + 54) return true;             // doorway
-  return y >= (state.last ? CONFIG.lastTop + 24 : 24) && y <= wy - 8 && x >= 8 && x <= CONFIG.W * 2 - 8;   // yard
+  return y >= (state.last ? Math.max(CONFIG.lastTop + 24, state.lbLimit) : 24) && y <= wy - 8 && x >= 8 && x <= CONFIG.W * 2 - 8;   // yard
 };
 const homeWallY = () => view.h - 130 + (state.mode === 'homelevels' || state.mode === 'runpan' ? 24 : 0);   // the level-select page draws the house a little lower   // the house sits above the bottom edge so thumbs have room
 function homeRepair(dt) {                     // every boy standing at a window repairs it
@@ -933,13 +934,14 @@ function startGame(kind) {
 // Last Battle (unlocked by clearing all 10 Home levels): Home with the door open, no perks; waves carry on from 16 so every enemy type shows up
 function startLastBattle() {
   state.runner = false; state.home = true;
+  state.mode = 'playing';             // (before the reset: the house height depends on the mode)
   resetGame();
   state.last = true;
-  state.mode = 'playing';
   state.story = null;
   state.door.open = true;
   startWave(16);
   state.castleHp = CONFIG.castleHp; state.cwT = 0; state.lastN = 0; state.guardT = 0; state.spawnTimer = CONFIG.firstSpawnDelay;
+  state.banner = 0; state.lbWave = 0; state.lbLeft = lbWaveSize(0); state.lbLimit = LB_LIM0();
   for (let k = 0; k < CONFIG.castleGuards; k++) addGuard(CONFIG.W - 60 + k * 24, CONFIG.lastTop + 30, k);
 }
 
@@ -950,14 +952,57 @@ function addGuard(x, y, k) {
   b.guard = true; b.phase = 4; b.gy = CONFIG.lastTop + 24 + (k % 3) * 18; b.go = (k - 2.5) * 9;
 }
 
-function updateLastBattle(dt) {          // endless spawns from above, a yeti now and then, guards topped up at the gate
+// Last Battle: LB_WAVES silent waves; each one cleared lets the boy go a bit further north. After the last one the way is open and enemies keep coming at the Castle.
+const LB_WAVES = 5, lbWaveSize = k => 6 + 3 * k;
+const LB_LIM0 = () => homeWallY() - 120, LB_LIMF = () => CONFIG.lastTop + 24;   // how far north the boy may go at first / at the end
+
+// The snow fort at the Castle: a boy standing in it takes no damage and enemies are kept out
+const FORT_X0 = CONFIG.W - 34, FORT_X1 = CONFIG.W + 34, FORT_Y0 = CONFIG.lastTop + 56, FORT_Y1 = CONFIG.lastTop + 92;
+const inLastFort = p => state.last && p.px >= FORT_X0 + 6 && p.px <= FORT_X1 - 6 && p.py >= FORT_Y0 + 6 && p.py <= FORT_Y1 - 6;
+const anyoneInFort = () => state.last && slots().some(sl => inLastFort(pl(sl)));
+function keepOutOfFort(b, T) {          // while a boy is inside, enemies can't walk through the fort walls
+  const r = T.radius;
+  if (b.x < FORT_X0 - r || b.x > FORT_X1 + r || b.y < FORT_Y0 - r || b.y > FORT_Y1 + r) return;
+  const d = [b.x - (FORT_X0 - r), (FORT_X1 + r) - b.x, b.y - (FORT_Y0 - r), (FORT_Y1 + r) - b.y], m = Math.min(...d), k = d.indexOf(m);
+  if (k === 0) b.x -= m; else if (k === 1) b.x += m; else if (k === 2) b.y -= m; else b.y += m;
+  b.x0 = b.x;
+}
+
+function updateLastBattle(dt) {
   const guards = state.bullies.filter(b => b.guard && b.state === 'walking').length;
   if (guards < CONFIG.castleGuards && (state.guardT -= dt) <= 0) { addGuard(CONFIG.W, CONFIG.lastTop + 6, Math.floor(Math.random() * 6)); state.guardT = 3.5; }
-  if ((state.spawnTimer -= dt) > 0) return;
-  state.spawnTimer = rand(1.4, 2.4);
-  if (state.bullies.filter(b => !b.guard && b.state === 'walking').length >= 14) return;
+  const live = state.bullies.filter(b => !b.guard && b.state === 'walking').length;
+  if (state.lbWave < LB_WAVES) {
+    if (state.lbLeft > 0) {
+      if ((state.spawnTimer -= dt) <= 0) { state.lbLeft--; state.spawnTimer = rand(1.2, 2); if (++state.lastN % 12 === 0) { state.yetiLeft = 1; state.toSpawn = 1; } spawnBully(); }
+    } else if (live === 0) {            // wave beaten: the way north opens a little
+      state.lbWave++;
+      state.lbLimit = LB_LIM0() + (LB_LIMF() - LB_LIM0()) * state.lbWave / LB_WAVES;
+      state.wave = 16 + state.lbWave;
+      state.lbLeft = lbWaveSize(state.lbWave); state.spawnTimer = 2.5;
+      sfx('wave');
+    }
+    return;
+  }
+  if ((state.spawnTimer -= dt) > 0) return;       // the way is open: keep them coming at the Castle
+  state.spawnTimer = rand(2, 3.2);
+  if (live >= 10) return;
   if (++state.lastN % 12 === 0) { state.yetiLeft = 1; state.toSpawn = 1; }
   spawnBully();
+}
+
+// The barrier across the map while the next wave isn't beaten, and the fort at the Castle
+function drawLastBarrier() {
+  const y = Math.round(state.lbLimit) - 8;
+  for (let x = 4; x < CONFIG.W * 2; x += 12) { rect(COLORS.shadow, x, y + 1, 9, 4); rect(COLORS.ice, x, y - 1, 9, 3); rect(COLORS.snow, x + 1, y - 2, 7, 2); }
+}
+function drawLastFort() {
+  const x0 = FORT_X0, x1 = FORT_X1, y0 = FORT_Y0, y1 = FORT_Y1, wall = (x, y, w, h) => { rect(COLORS.night, x - 1, y - 1, w + 2, h + 2); rect(COLORS.snow, x, y, w, h); rect(COLORS.shadow, x, y + h - 2, w, 2); };
+  rect(COLORS.ice, x0 + 6, y0 + 6, x1 - x0 - 12, y1 - y0 - 12);                          // trampled floor
+  wall(x0, y0, x1 - x0, 6);                                                                // back (north) wall
+  wall(x0, y0, 6, y1 - y0); wall(x1 - 6, y0, 6, y1 - y0);                                  // side walls
+  wall(x0, y1 - 6, 24, 6); wall(x1 - 24, y1 - 6, 24, 6);                                   // front wall with a doorway in the middle
+  for (let x = x0 + 4; x < x1 - 4; x += 10) wall(x, y0 - 4, 6, 4);                         // bumps along the top
 }
 
 const inCastle = s => Math.abs(s.x - CONFIG.W) <= 76 && s.y >= CONFIG.lastTop - 100 && s.y <= CONFIG.lastTop + 4;
@@ -1096,8 +1141,8 @@ function startRunnerLevel(n) {            // Runner level n: no fort, clear a se
 
 function startHomeLevel(n) {              // Home level n: defend the house, clear a set number of enemies; difficulty follows wave 2n-1
   state.runner = false; state.home = true;
-  resetGame();
   state.mode = 'playing';
+  resetGame();
   state.story = { level: n, home: true };
   startWave(2 * n - 1);
   state.toSpawn = 8 + 3 * n;
@@ -1191,6 +1236,7 @@ function spawnBully(rtype, rx, ry) {   // rtype/rx/ry: place a specific enemy (a
     else y0 = view.h + T.halfH;
   }
   if (state.last && !rtype) y0 = Math.max(CONFIG.lastTop + 40, Math.min(-T.halfH, Math.min(...slots().map(q => pl(q).py)) - view.h / 2 - 24));   // Last Battle: they pour in from above the northernmost boy
+  if (state.last && !rtype && anyoneInFort()) { x0 = CONFIG.W + rand(-60, 60); y0 = CONFIG.lastTop + 34; }   // boy in the fort: they come out in front of him
   if (rtype) { x0 = rx; y0 = ry; }
   state.bullies.push({
     id: ++bullyId,
@@ -1471,7 +1517,7 @@ function updateHomeBully(b, T, dt) {          // true when it reaches the boy
   if (b.phase === 5 && b.y < wy - 1) b.phase = 4;
   b.vx = dt > 0 ? (b.x - px) / dt : 0; b.vy = dt > 0 ? (b.y - py) / dt : 0;
   footstep(b, T, px, py);
-  return b.phase >= 2 && cand.some(p => Math.hypot(b.x - p.px, b.y - p.py) <= 6 + T.radius);
+  return b.phase >= 2 && cand.some(p => Math.hypot(b.x - p.px, b.y - p.py) <= 6 + T.radius && !inLastFort(p));
 }
 
 function updateBullies(dt) {
@@ -1516,6 +1562,7 @@ function updateBullies(dt) {
     }
     if (b.state === 'walking' && state.home) {
       if (updateHomeBully(b, T, dt)) { state.bullies.splice(i, 1); damageFort(T.fortDamage); }
+      else if (state.last && !b.guard && anyoneInFort()) keepOutOfFort(b, T);
       continue;
     }
     if (b.state === 'walking') {
@@ -1588,7 +1635,8 @@ function updateEnemyBalls(dt) {
       if (w && e.tgt === 'win') { w.hp = Math.max(0, w.hp - 1.5); puff(xc, wy); sfx('fort'); state.enemyBalls.splice(i, 1); continue; }
     }
     const hit = slots().map(pl).some(p => Math.hypot(e.x - p.px, e.y - p.py) <= 6);
-    if (hit) { puff(e.x, e.y); state.enemyBalls.splice(i, 1); damageFort(1); }
+    const hitP = hit && slots().map(pl).find(p => Math.hypot(e.x - p.px, e.y - p.py) <= 6);
+    if (hit) { puff(e.x, e.y); state.enemyBalls.splice(i, 1); if (!inLastFort(hitP)) damageFort(1); }
     else if (e.y > view.h + 10 || e.x < -10 || e.x > CONFIG.W * 2 + 10 || e.y < (state.last ? CONFIG.lastTop - 90 : -10)) state.enemyBalls.splice(i, 1);
   }
 }
@@ -1869,7 +1917,7 @@ function setRemotePos(d) {
 function buildSnapshot() {
   const ev = net.evq; net.evq = [];
   return {
-    k: 's', rn: state.runner ? 1 : 0, hm: state.home ? 1 : 0, la: state.last ? 1 : 0, ch: state.castleHp, hp: [r1(state.px), r1(state.py)], m: state.mode, sc: state.score, w: state.wave, h: state.health,
+    k: 's', rn: state.runner ? 1 : 0, hm: state.home ? 1 : 0, la: state.last ? 1 : 0, ch: state.castleHp, lb: r1(state.lbLimit), lw: state.lbWave, hp: [r1(state.px), r1(state.py)], m: state.mode, sc: state.score, w: state.wave, h: state.health,
     fl: r1(state.flash * 10) / 10, bn: r1(state.banner), tm: r1(state.time), tr: state.treesRemoved,
     pu: state.popup ? { s: state.popup.text, t: r1(state.popup.t) } : null,
     pw: state.power ? [r1(state.power.x), r1(state.power.baseY), r1(state.power.age)] : null,
@@ -1894,7 +1942,7 @@ function guestOnData(d) {
 
 function applySnapshot(d) {
   const prev = state.mode;
-  state.runner = !!d.rn; state.home = !!d.hm; state.last = !!d.la; state.castleHp = d.ch || 0;
+  state.runner = !!d.rn; state.home = !!d.hm; state.last = !!d.la; state.castleHp = d.ch || 0; state.lbLimit = d.lb || 0; state.lbWave = d.lw || 0;
   if (d.m === 'castlewin' && prev !== 'castlewin') { state.cwT = 0; spawnConfetti(); }
   if (d.m === 'cooplobby') {                                           // host is in the lobby: nothing to simulate
     if (prev !== 'cooplobby') { resetGame(); state.entry = ''; setMode('cooplobby'); }
@@ -2477,8 +2525,8 @@ function drawHud() {
   rect(COLORS.night, 1, 12, CONFIG.fortHealth * 6 + 2, 9);
   ctx.globalAlpha = 1;
   drawText('SCORE ' + state.score, 3, 3, 1, COLORS.snow);
-  drawText(state.story ? 'LEVEL ' + state.story.level : 'WAVE ' + state.wave, CONFIG.W / 2, 3, 1, COLORS.snow, 'center');
-  drawText('BEST WAVE ' + Math.max(bestNow(), state.wave), CONFIG.W - 3, 3, 1, COLORS.snow, 'right');
+  if (!state.last) drawText(state.story ? 'LEVEL ' + state.story.level : 'WAVE ' + state.wave, CONFIG.W / 2, 3, 1, COLORS.snow, 'center');
+  if (!state.last) drawText('BEST WAVE ' + Math.max(bestNow(), state.wave), CONFIG.W - 3, 3, 1, COLORS.snow, 'right');
   for (let i = 0; i < CONFIG.fortHealth; i++) drawFlake(3 + i * 6, 14, i < state.health);
   if (state.gun > 0) drawTextShadow('GUN ' + Math.ceil(state.gun), 3, 24, 1, COLORS.coatBlue);
 
@@ -2559,7 +2607,7 @@ function drawPopup() {
 function drawBanner() {
   if (state.mode !== 'playing' || state.banner <= 0) return;
   ctx.globalAlpha = Math.min(1, state.banner / 0.4);   // fade out over the last 0.4 s
-  drawTextShadow(state.story ? 'LEVEL ' + state.story.level : 'WAVE ' + state.wave, CONFIG.W / 2, 100, 3, COLORS.gold, 'center');
+  drawTextShadow(state.last ? 'LAST BATTLE' : state.story ? 'LEVEL ' + state.story.level : 'WAVE ' + state.wave, CONFIG.W / 2, 100, state.last ? 2 : 3, COLORS.gold, 'center');
   ctx.globalAlpha = 1;
 }
 
@@ -3002,7 +3050,7 @@ function drawFrame() {
   drawShadow();
   drawPrints();
   drawHome();
-  if (state.last) drawCastle();
+  if (state.last) { drawCastle(); drawLastFort(); if (state.lbWave < LB_WAVES) drawLastBarrier(); }
   drawTreesAndBullies();
   drawPower();
   drawAvalanche();
