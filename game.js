@@ -766,7 +766,7 @@ const homeWalkable = (x, y) => {            // where the boy may stand (door ope
   if (Math.abs(x - state.door.x) <= 5 && y >= wy - 8 && y <= wy + 54) return true;             // doorway
   return y >= 24 && y <= wy - 8 && x >= 8 && x <= CONFIG.W * 2 - 8;                            // yard
 };
-const homeWallY = () => view.h - 130;   // the house sits above the bottom edge so thumbs have room
+const homeWallY = () => view.h - 130 + (state.mode === 'homelevels' || state.mode === 'runpan' ? 24 : 0);   // the level-select page draws the house a little lower   // the house sits above the bottom edge so thumbs have room
 function homeRepair(dt) {                     // every boy standing at a window repairs it
   const wy = homeWallY();
   let fixing = null;
