@@ -599,7 +599,7 @@ function throwSnowball(slot, auto, angle) {          // auto = machine-gun shot:
   }
   const a = p.aimAngle * DEG, h = handPos(slot);
   state.snowballs.push({
-    x: h.x, y: h.y, owner: slot,
+    x: h.x, y: h.y, owner: slot, auto: !!auto,
     vx: Math.cos(a) * CONFIG.snowballSpeed, vy: -Math.sin(a) * CONFIG.snowballSpeed,
   });
   if (!auto) p.cooldown = CONFIG.throwCooldown;
@@ -794,6 +794,7 @@ function update(dt) {
       if ((py - wy) * (s.y - wy) < 0) {
         const xc = px + (s.x - px) * (py - wy) / (py - s.y);
         const pk = HOME_PERKS.find(p => Math.abs(xc - p.x) <= 9 && Math.abs(state.px - p.x) <= 16);   // must be standing in front of it
+        if (pk && s.auto) { puff(xc, wy); state.snowballs.splice(i, 1); continue; }   // machine-gun shots never open the buy screen
         if (pk) { puff(xc, wy); sfx('clank'); state.snowballs.splice(i, 1); askPerk(pk.id); continue; }
         const gap = state.wins.some(w => Math.abs(xc - w.x) <= CONFIG.homeWinHalf - 1) || (state.door.open && Math.abs(xc - state.door.x) <= 7);
         if (!gap) { puff(xc, wy); state.snowballs.splice(i, 1); continue; }
