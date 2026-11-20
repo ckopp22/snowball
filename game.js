@@ -26,6 +26,8 @@ const CONFIG = {
   homeRepair: 3,          // window hp per second while the boy stands at it
   homeRepairDist: 20,
   homeL: 20, homeR: 340,  // the house spans these world x's; its 12 px end walls are inside, snow outside
+  castleHp: 60,           // Last Battle: snowball hits to bring the Castle down
+  castleGuards: 6,        // enemies standing guard in front of it
   lastTop: -900,          // Last Battle: world y of the Castle's base (the map runs from the house up to here)
   homeWinHalf: 22,        // half the window opening width
   stickRadius: 18,        // px the joystick knob can travel from where the thumb landed
@@ -556,6 +558,7 @@ const state = {
   perks: {},           // owned home perks { id: true }
   ask: null,           // perk id being confirmed
   camX: 0, camY: 0,
+  castleHp: 0, cwT: 0, lastN: 0, guardT: 0,   // Last Battle: Castle health, win-sequence clock, spawn counter, guard refill timer
   walkT: 0,
   hurt: 0,             // timer: kid flashes red and bounces when the fort / player is hit
   px: 90, py: 200,     // runner position (centre of the kid)
@@ -855,6 +858,9 @@ function update(dt) {
       puff(th.x, th.y);
       sfx('tree');
       state.snowballs.splice(i, 1);
+    } else if (state.last && state.castleHp > 0 && inCastle(s)) {   // the Castle takes the hit
+      hitCastle(s);
+      state.snowballs.splice(i, 1);
     } else if (s.x < -m || s.x > (state.home ? CONFIG.W * 2 : CONFIG.W) + m || s.y < (state.last ? CONFIG.lastTop - 90 : -m) || s.y > view.h + m) {
       state.snowballs.splice(i, 1);     // miss: just leaves the screen
     }
@@ -933,6 +939,51 @@ function startLastBattle() {
   state.story = null;
   state.door.open = true;
   startWave(16);
+  state.castleHp = CONFIG.castleHp; state.cwT = 0; state.lastN = 0; state.guardT = 0; state.spawnTimer = CONFIG.firstSpawnDelay;
+  for (let k = 0; k < CONFIG.castleGuards; k++) addGuard(CONFIG.W - 60 + k * 24, CONFIG.lastTop + 30, k);
+}
+
+// A Castle guard: stands in front of the Castle and slides along the line between the boy and the Castle to block shots; turns on a boy who gets close
+function addGuard(x, y, k) {
+  spawnBully(pickRider(), x, y);
+  const b = state.bullies[state.bullies.length - 1];
+  b.guard = true; b.phase = 4; b.gy = CONFIG.lastTop + 24 + (k % 3) * 18; b.go = (k - 2.5) * 9;
+}
+
+function updateLastBattle(dt) {          // endless spawns from above, a yeti now and then, guards topped up at the gate
+  const guards = state.bullies.filter(b => b.guard && b.state === 'walking').length;
+  if (guards < CONFIG.castleGuards && (state.guardT -= dt) <= 0) { addGuard(CONFIG.W, CONFIG.lastTop + 6, Math.floor(Math.random() * 6)); state.guardT = 3.5; }
+  if ((state.spawnTimer -= dt) > 0) return;
+  state.spawnTimer = rand(1.4, 2.4);
+  if (state.bullies.filter(b => !b.guard && b.state === 'walking').length >= 14) return;
+  if (++state.lastN % 12 === 0) { state.yetiLeft = 1; state.toSpawn = 1; }
+  spawnBully();
+}
+
+const inCastle = s => Math.abs(s.x - CONFIG.W) <= 76 && s.y >= CONFIG.lastTop - 100 && s.y <= CONFIG.lastTop + 4;
+function hitCastle(s) {
+  puff(s.x, s.y, ['#6e7a8a', COLORS.snow]); sfx('clank');
+  state.score += 25;
+  if (--state.castleHp > 0) return;
+  state.castleHp = 0; state.mode = 'castlewin'; state.cwT = 0; state.snowballs = [];
+  awardXp(state.score); spawnConfetti(); sfx('wave');
+}
+
+// Castle down: it sinks into the ground in a cloud of snow, confetti, then the victory text
+function updateCastleWin(dt) {
+  state.cwT += dt;
+  updateParticles(dt);
+  if (net.role === 'guest') return;
+  if (state.cwT < 2.6 && Math.random() < dt * 14) puff(CONFIG.W + rand(-70, 70), CONFIG.lastTop - rand(0, 40), ['#6e7a8a', COLORS.snow]);
+  if (state.cwT >= 9) { if (isCoop()) enterLobby(); else { resetGame(); setMode('title'); } }
+}
+
+function drawCastleWin() {
+  if (state.cwT < 1) return;
+  ctx.globalAlpha = Math.min(1, (state.cwT - 1) / 0.6);
+  drawTextShadow('YOU BEAT THE', CONFIG.W / 2, 90, 2, COLORS.gold, 'center');
+  drawTextShadow('EVIL SNOW FORCE', CONFIG.W / 2, 112, 2, COLORS.gold, 'center');
+  ctx.globalAlpha = 1;
 }
 
 // ---- Story intro (level 1): "normal day" -> boy walks in -> shake -> he runs to the fort spot and builds it -> quote ----
@@ -1132,6 +1183,7 @@ function spawnBully(rtype, rx, ry) {   // rtype/rx/ry: place a specific enemy (a
 function updateWaves(dt) {
   if (state.mode !== 'playing') return;
   if (state.banner > 0) state.banner -= dt;
+  if (state.last) { updateLastBattle(dt); return; }
   if (state.toSpawn > 0) {
     state.spawnTimer -= dt;
     if (state.spawnTimer <= 0) {
@@ -1393,6 +1445,20 @@ function updateBullies(dt) {
   for (let i = state.bullies.length - 1; i >= 0; i--) {
     const b = state.bullies[i], T = CONFIG.bullyTypes[b.type];
     if (b.flash > 0) b.flash -= dt;
+    if (b.state === 'walking' && b.guard) {                // Castle guard: hold the line between the boy and the Castle
+      const tp = runTarget(b.x, b.y);
+      if (Math.hypot(tp.px - b.x, tp.py - b.y) < 90) { b.guard = false; b.phase = 4; }
+      else {
+        const cx = CONFIG.W, cy = CONFIG.lastTop - 20, below = tp.py > b.gy + 8;
+        let tx = below ? tp.px + (cx - tp.px) * (tp.py - b.gy) / (tp.py - cy) : cx;
+        tx = Math.max(cx - 70, Math.min(cx + 70, tx + b.go));
+        const dx = tx - b.x, dy = b.gy - b.y, d = Math.hypot(dx, dy), step = b.speed * 1.6 * dt;
+        const mx = d <= step ? dx : dx / d * step, my = d <= step ? dy : dy / d * step;
+        b.x += mx; b.y += my; b.x0 = b.x; b.vx = dt > 0 ? mx / dt : 0; b.vy = dt > 0 ? my / dt : 0;
+        if (d > 0.5) b.ang = Math.atan2(dy, dx);
+        continue;
+      }
+    }
     if (b.state === 'walking' && T.drives) {               // Snowmobile: races to its window, drops the rider, drives back to where it came from
       const wy = homeWallY(), tp = state.last ? runTarget(b.x, b.y) : null;   // Last Battle: it chases the boy, not a window
       const gx = b.dropped ? b.sx : tp ? tp.px : state.wins[b.bw].x, gy = b.dropped ? b.sy : tp ? Math.min(tp.py - 50, wy - 26) : wy - 26;
@@ -1770,7 +1836,7 @@ function setRemotePos(d) {
 function buildSnapshot() {
   const ev = net.evq; net.evq = [];
   return {
-    k: 's', rn: state.runner ? 1 : 0, hm: state.home ? 1 : 0, la: state.last ? 1 : 0, hp: [r1(state.px), r1(state.py)], m: state.mode, sc: state.score, w: state.wave, h: state.health,
+    k: 's', rn: state.runner ? 1 : 0, hm: state.home ? 1 : 0, la: state.last ? 1 : 0, ch: state.castleHp, hp: [r1(state.px), r1(state.py)], m: state.mode, sc: state.score, w: state.wave, h: state.health,
     fl: r1(state.flash * 10) / 10, bn: r1(state.banner), tm: r1(state.time), tr: state.treesRemoved,
     pu: state.popup ? { s: state.popup.text, t: r1(state.popup.t) } : null,
     pw: state.power ? [r1(state.power.x), r1(state.power.baseY), r1(state.power.age)] : null,
@@ -1795,7 +1861,8 @@ function guestOnData(d) {
 
 function applySnapshot(d) {
   const prev = state.mode;
-  state.runner = !!d.rn; state.home = !!d.hm; state.last = !!d.la;
+  state.runner = !!d.rn; state.home = !!d.hm; state.last = !!d.la; state.castleHp = d.ch || 0;
+  if (d.m === 'castlewin' && prev !== 'castlewin') { state.cwT = 0; spawnConfetti(); }
   if (d.m === 'cooplobby') {                                           // host is in the lobby: nothing to simulate
     if (prev !== 'cooplobby') { resetGame(); state.entry = ''; setMode('cooplobby'); }
     return;
@@ -1955,6 +2022,23 @@ function drawHome() {
 // Decorative furniture on the floor (the boy walks in front of it)
 // Last Battle: the Evil Snow Force's castle at the top of the map, centred over the door
 function drawCastle() {
+  const won = state.mode === 'castlewin';
+  ctx.save();
+  if (won) {                                                   // crash: clip at the ground, shake, sink
+    ctx.beginPath(); ctx.rect(CONFIG.W - 120, CONFIG.lastTop - 200, 240, 202); ctx.clip();
+    ctx.translate(state.cwT < 2.6 ? Math.round((Math.random() - 0.5) * 4) : 0, Math.round(Math.min(110, state.cwT * 42)));
+  }
+  drawCastleBody();
+  ctx.restore();
+  if (!won && state.castleHp > 0) {                            // health bar above it
+    const cx = CONFIG.W, y = CONFIG.lastTop - 136, w = 100;
+    drawText5('EVIL SNOW FORCE', cx, y - 10, 1, COLORS.snow, 'center', COLORS.night);
+    rect(COLORS.night, cx - w / 2 - 1, y - 1, w + 2, 8); rect(COLORS.shadow, cx - w / 2, y, w, 6);
+    rect(COLORS.red, cx - w / 2, y, Math.max(1, Math.round(w * state.castleHp / CONFIG.castleHp)), 6);
+  }
+}
+
+function drawCastleBody() {
   const cx = CONFIG.W, y = CONFIG.lastTop, G = '#6e7a8a', D = '#4a5563', K = '#2f3744';
   rect(K, cx - 62, y - 52, 124, 54); rect(G, cx - 60, y - 50, 120, 50);                       // wall
   for (let x = cx - 60; x < cx + 60; x += 8) { rect(K, x - 1, y - 60, 7, 11); rect(G, x, y - 59, 5, 9); }   // battlements
@@ -2918,6 +3002,7 @@ function drawFrame() {
     else if (state.mode === 'perkconfirm' || (state.ask && state.mode === 'playing')) drawPerkConfirm();
     else if (state.mode === 'gameover') drawGameOver();
     else if (state.mode === 'levelwin') drawLevelWin();
+    else if (state.mode === 'castlewin') drawCastleWin();
   }
   drawCelebration();
   if (isCoop() && net.lost && (state.mode === 'playing' || state.mode === 'gameover')) drawLost();
@@ -2972,6 +3057,7 @@ function frame(now) {
   else if (state.mode === 'playing') update(dt);
   else if (state.mode === 'cutscene') { updateFlakes(dt); updateCutscene(dt); }
   else if (state.mode === 'runpan') { updateFlakes(dt); if ((state.pan.t += dt) >= RUN_T + PAN_T) setMode(PAGE_MODES[state.pan.to]); }
+  else if (state.mode === 'castlewin') { updateFlakes(dt); updateCastleWin(dt); }
   else if (state.mode !== 'paused') updateFlakes(dt);   // snow keeps falling on menus / game over
   if (state.mode === 'splash' && (splashT += dt) >= SPLASH_TIME) setMode('title');
   if (isCoop()) netTick(dt);
