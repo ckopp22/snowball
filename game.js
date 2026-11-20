@@ -97,6 +97,8 @@ const CONFIG = {
     big:     { speedMul: 0.6, hp: 2, points: 30, fortDamage: 2, radius: 8, halfH: 8, from: 5, weight: 2,  weightPer: 0.5, weightMax: 6 },
     sled:    { speedMul: 1.8, hp: 1, points: 25, fortDamage: 1, radius: 7, halfH: 6, from: 8, weight: 2,  weightPer: 0.5, weightMax: 5,
                swayAmp: 16, swayFreq: 0.35 }, // px and Hz of the side-to-side drift
+    // Snowball Thrower: Fort mode only (Story level 4+, endless wave 15+); stops at random moments to lob a snowball at the fort
+    thrower: { speedMul: 0.8, hp: 1, points: 30, fortDamage: 1, radius: 6, halfH: 7, from: 1, weight: 2, weightPer: 0.3, weightMax: 4, throws: true },
     // Yeti: not part of the random mix (special); a fixed number of them is slipped into each wave from wave 11
     yeti:    { speedMul: 0.7, hp: 5, points: 100, fortDamage: 4, radius: 10, halfH: 10, from: 11, weight: 0, weightPer: 0, weightMax: 0, special: true },
   },
@@ -533,6 +535,7 @@ const state = {
   entry: '',           // co-op join code being typed
   flakes: [],
   snowballs: [],
+  enemyBalls: [],
   cooldown: 0,
   swing: 0,            // arm swing timer, counts down from armSwingTime
   aiming: false,
@@ -600,7 +603,7 @@ function throwSnowball(slot, auto, angle) {          // auto = machine-gun shot:
     netSend({ k: 't', a: r1(p.aimAngle), x: r1(state.px), y: r1(state.py) });
     p.cooldown = CONFIG.throwCooldown;                // local feedback right away
     p.swing = CONFIG.armSwingTime;
-    sfx('throw');
+    
     return;
   }
   const a = p.aimAngle * DEG, h = handPos(slot);
@@ -861,6 +864,7 @@ function update(dt) {
   }
   updateAvalanche(dt);
   updateBullies(dt);
+  updateEnemyBalls(dt);
   updateParticles(dt);
   updatePrints(dt);
   updateWaves(dt);
@@ -882,7 +886,7 @@ const waveGap = n => CONFIG.gapMin + (CONFIG.gapStart - CONFIG.gapMin) * Math.po
 
 function resetGame() {
   Object.assign(state, {
-    snowballs: [], bullies: [], yetiLeft: 0, particles: [], prints: [], cooldown: 0, swing: 0,
+    snowballs: [], enemyBalls: [], bullies: [], yetiLeft: 0, particles: [], prints: [], cooldown: 0, swing: 0,
     score: 0, newBest: false, health: CONFIG.fortHealth, flash: 0, hurt: 0,
     wave: 0, toSpawn: 0, spawnTimer: 0, waveEnded: false, breakTimer: 0, banner: 0, time: 0,
     power: null, avalanche: null, powerTimer: CONFIG.powerFirstDelay, gun: 0, gunTimer: 0, treesRemoved: 0, treeReturnTimer: 0, popup: null, remote: freshRemote(),
@@ -1036,6 +1040,9 @@ function startWave(n) {
 
 let bullyId = 0;
 
+// Throwers only show up in Fort mode: Story level 4+, or endless wave 15+ (not co-op)
+const throwerOk = wave => !state.runner && !state.home && !isCoop() && (state.story ? state.story.level >= 4 : wave >= 15);
+
 // Weighted random type: newer types get likelier as waves rise, Regular stays the most common
 function pickType(wave) {
   const ws = [];
@@ -1043,6 +1050,7 @@ function pickType(wave) {
   for (const k in CONFIG.bullyTypes) {
     const T = CONFIG.bullyTypes[k];
     if (T.special) continue;                         // Yetis are placed by the wave, not rolled
+    if (k === 'thrower' && !throwerOk(wave)) continue;
     const w = wave >= T.from ? Math.min(T.weightMax, T.weight + T.weightPer * (wave - T.from)) : 0;
     ws.push([k, w]);
     total += w;
@@ -1357,6 +1365,15 @@ function updateBullies(dt) {
       if (updateHomeBully(b, T, dt)) { state.bullies.splice(i, 1); damageFort(T.fortDamage); }
       continue;
     }
+    if (b.state === 'walking' && T.throws && b.y > 8) {   // Thrower: walks, then stops now and then to lob a snowball at the fort
+      if (b.pause > 0) {
+        b.pause -= dt; b.vx = b.vy = 0;
+        if (!b.thrown && b.pause < 0.4) { b.thrown = true; throwBall(b); }
+        if (b.pause <= 0) b.walk = rand(1.5, 3.5);
+        continue;
+      }
+      if ((b.walk = (b.walk === undefined ? rand(1, 2.5) : b.walk) - dt) <= 0) { b.pause = 0.9; b.thrown = false; continue; }
+    }
     if (b.state === 'walking') {
       b.age += dt;
       const prevX = b.x, prevY = b.y;
@@ -1395,6 +1412,21 @@ function updateBullies(dt) {
       if (b.state === 'falling' && b.t >= CONFIG.fallTime) { b.state = 'fading'; b.t = 0; }
       else if (b.state === 'fading' && b.t >= CONFIG.fadeTime) state.bullies.splice(i, 1);
     }
+  }
+}
+
+function throwBall(b) {
+  const a = Math.atan2(CONFIG.fortCY - b.y, CONFIG.fortCX - b.x), v = 90;
+  state.enemyBalls.push({ x: b.x + 5, y: b.y - 6, vx: Math.cos(a) * v, vy: Math.sin(a) * v });
+  
+}
+
+function updateEnemyBalls(dt) {
+  for (let i = state.enemyBalls.length - 1; i >= 0; i--) {
+    const e = state.enemyBalls[i];
+    e.x += e.vx * dt; e.y += e.vy * dt;
+    if (Math.hypot(e.x - CONFIG.fortCX, e.y - CONFIG.fortCY) <= CONFIG.fortOuter) { puff(e.x, e.y); state.enemyBalls.splice(i, 1); damageFort(1); }
+    else if (e.y > CONFIG.H + 10 || e.x < -10 || e.x > CONFIG.W + 10 || e.y < -10) state.enemyBalls.splice(i, 1);
   }
 }
 
@@ -2010,6 +2042,12 @@ function drawCooldownRing(slot) {
   }
 }
 
+function drawEnemyBall(e) {          // thrown at the fort: red-rimmed so it reads as the enemy's
+  const x = Math.round(e.x), y = Math.round(e.y);
+  rect(COLORS.red, x - 2, y - 3, 5, 7); rect(COLORS.red, x - 3, y - 2, 7, 5);
+  rect(COLORS.snow, x - 2, y - 2, 4, 4);
+}
+
 function drawSnowball(s) {
   const x = Math.round(s.x), y = Math.round(s.y);
   // 7x7 pixel disc (radius 3)
@@ -2048,6 +2086,7 @@ function drawFort() {
 // Sprite size (w x h standing, lw x lh lying) and colours per type. r(colour, x, y, w, h) draws
 // relative to the sprite's top-left; s alternates 0/1 for the walk cycle.
 const LOOK = {
+  thrower: { w: 10, h: 14, lw: 14, lh: 8,  hair: COLORS.gold, coat: COLORS.orange },
   regular: { w: 10, h: 14, lw: 14, lh: 8,  hair: COLORS.brown },
   runner:  { w: 8,  h: 12, lw: 11, lh: 7,  hair: COLORS.hatGreen, coat: COLORS.shadow },
   big:     { w: 14, h: 16, lw: 16, lh: 11, hair: COLORS.black, coat: COLORS.coatBlue },
@@ -2057,6 +2096,16 @@ const LOOK = {
 LOOK.regular.coat = COLORS.red;
 
 const SPRITES = {
+  thrower: (r, s) => {                                    // gold hat, orange coat, snowball held up in one hand
+    r(COLORS.gold, 2, 0, 6, 2);
+    r(COLORS.skin, 2, 2, 6, 4);
+    r(COLORS.black, 3, 3, 1, 1); r(COLORS.black, 6, 3, 1, 1);
+    r(COLORS.orange, 1, 6, 8, 5);
+    r(COLORS.orange, 0, 6, 1, 4); r(COLORS.orange, 9, 3, 1, 4);
+    r(COLORS.snow, 9, 0, 3, 3);
+    r(COLORS.black, 2, 11, 2, 3 - s);
+    r(COLORS.black, 6, 11, 2, 2 + s);
+  },
   regular: (r, s) => {
     r(COLORS.brown, 2, 0, 6, 2);                          // hair
     r(COLORS.skin, 2, 2, 6, 4);                           // face
@@ -2713,6 +2762,7 @@ function draw() {
   for (const sl of slots()) drawCooldownRing(sl);
   for (const sl of slots()) drawAimLine(sl);
   for (const s of state.snowballs) drawSnowball(s);
+  for (const e of state.enemyBalls) drawEnemyBall(e);
   drawParticles();
   if (state.home) ctx.restore();
   drawStick();
