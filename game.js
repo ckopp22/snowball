@@ -2456,9 +2456,9 @@ function drawPerkConfirm() {
   drawTextShadow('COST ' + p.cost, cx, 116, 1, COLORS.gold, 'center');
   drawTextShadow('YOU HAVE ' + state.score, cx, 128, 1, COLORS.snow, 'center');
   const noCp = p.id === 'checkpoint' && !checkpointOk();
-  if (p.id === 'checkpoint') drawTextShadow('SKIP TO WAVE ' + checkpointTarget(), cx, 104, 1, COLORS.ice, 'center');
+  if (p.id === 'checkpoint') drawTextShadow('SKIP TO WAVE ' + checkpointTarget(), cx, 138, 1, COLORS.ice, 'center');
   if (state.perks[p.id] || state.score < p.cost || noCp) {
-    drawTextShadow(state.perks[p.id] ? 'ALREADY OWNED' : noCp ? 'NOT REACHED YET' : 'NOT ENOUGH POINTS', cx, 144, 1, COLORS.red, 'center');
+    drawTextShadow(state.perks[p.id] ? 'ALREADY OWNED' : noCp ? 'NOT REACHED YET' : 'NOT ENOUGH POINTS', cx, p.id === 'checkpoint' ? 150 : 144, 1, COLORS.red, 'center');
     button('OK', cx, 175, 90, 1, closePerk, COLORS.ice, 1);
   } else {
     button('BUY', cx, 165, 100, 1, () => { buyPerk(p); closePerk(); }, COLORS.hatGreen, 1);
