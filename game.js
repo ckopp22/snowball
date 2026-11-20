@@ -690,7 +690,7 @@ const clampRx = x => Math.max(8, Math.min(CONFIG.W - 8, x)), clampRy = y => Math
 // Home perks: plaques on the outer wall (two left of the door, two right); hit one with a snowball to buy it
 const HOME_PERKS = [
   { id: 'health', name: 'HEALTH', x: 120, cost: 1000 },
-  { id: 'avalanche', name: 'AVALANCHE', x: 150, cost: 500 },
+  { id: 'avalanche', name: 'AVALANCHE', x: 150, cost: 1000 },
   { id: 'gun', name: 'MACHINE GUN', x: 210, cost: 500 },
   { id: 'door', name: 'DOOR', x: 240, cost: 500 },
 ];
