@@ -1984,7 +1984,7 @@ function perkIcon(id, cx, cy, k, rot) {
 }
 
 function drawPerkPlaques() {
-  if (state.story) return;           // no perks in Home levels
+  if (state.story || state.mode === 'homelevels' || state.mode === 'runpan') return;   // no perks in Home levels
   const wy = homeWallY();
   for (const p of HOME_PERKS) {
     if (state.perks[p.id]) ctx.globalAlpha = 0.45;
