@@ -839,7 +839,7 @@ const waveCount = n => Math.min(CONFIG.waveMax, CONFIG.waveBase + CONFIG.wavePer
 // Speed grows 4% per wave, compounding, capped at 2.5x
 const waveSpeed = n => CONFIG.regularSpeed * Math.min(CONFIG.speedCap, Math.pow(1 + CONFIG.speedGrowth, n - 1));
 // Yetis in wave n: none before their first wave, then 1, +1 every yetiEvery waves, capped at yetiMax
-const yetiWave = n => n > 0 && n % 5 === 0;   // every 5th wave: only Yetis, 3 on wave 5, +3 every 5 waves
+const yetiWave = n => !state.story && n > 0 && n % 5 === 0;   // every 5th wave: only Yetis, 3 on wave 5, +3 every 5 waves
 const yetiCount = n => {
   if (yetiWave(n)) return 3 * n / 5;
   const from = CONFIG.bullyTypes.yeti.from;
