@@ -813,7 +813,7 @@ function update(dt) {
     }
     if (state.home && s.y > homeWallY() + 5 && (s.x < CONFIG.homeL + 12 || s.x > CONFIG.homeR - 12)) {   // end walls
       const sp = HOME_PERKS.find(p => p.side), spy = homeWallY() + sp.dy;
-      if (!s.auto && s.x > CONFIG.homeR - 12 && state.px > CONFIG.homeR - 70 && s.y >= spy - 2 && s.y <= spy + 12) { puff(s.x, s.y); sfx('clank'); state.snowballs.splice(i, 1); askPerk(sp.id); continue; }
+      if (!s.auto && s.x > CONFIG.homeR - 12 && state.px > CONFIG.homeR - 70 && s.y >= spy - 2 && s.y <= spy + 18) { puff(s.x, s.y); sfx('clank'); state.snowballs.splice(i, 1); askPerk(sp.id); continue; }
       puff(s.x, s.y); state.snowballs.splice(i, 1); continue;
     }
     const bh = firstBullyHit(px, py, s.x, s.y), th = firstTreeHit(px, py, s.x, s.y), ph = firstPowerHit(px, py, s.x, s.y);
@@ -1808,14 +1808,14 @@ function drawDoor() {
 }
 
 // Small pixel icons for the perks (about 5x5 units; k = scale), used on the wall plaques, the buttons and the confirm screen
-function perkIcon(id, cx, cy, k) {
+function perkIcon(id, cx, cy, k, rot) {
   const r = (c, x, y, w, h) => rect(c, Math.round(cx + x * k), Math.round(cy + y * k), w * k, h * k);
   if (id === 'health') {                                    // bright green medical cross (outlined and longer when drawn bigger)
     r('#2ee05a', 0, -2, 1, 5); r('#2ee05a', -2, 0, 5, 1);        // thin cross at every size, so it matches the plaque
   }
   else if (id === 'avalanche') { r(COLORS.snow, 0, -2, 1, 1); r(COLORS.snow, -1, -1, 3, 1); r(COLORS.ice, -2, 0, 5, 3); }
   else if (id === 'gun') { r(COLORS.ice, -2, -1, 5, 2); r(COLORS.ice, 2, -1, 2, 1); r(COLORS.ice, -2, 1, 2, 2); }
-  else if (id === 'checkpoint') { r(COLORS.red, -2, -2, 1, 5); r(COLORS.red, -1, -2, 4, 3); }
+  else if (id === 'checkpoint') { if (rot) { r(COLORS.red, -2, -2, 5, 1); r(COLORS.red, 0, -1, 3, 4); } else { r(COLORS.red, -2, -2, 1, 5); r(COLORS.red, -1, -2, 4, 3); } }
   else { r('#c58b4a', -2, -2, 5, 5); r('#6b4423', -1, -1, 3, 4); r(COLORS.gold, 1, 1, 1, 1); }
 }
 
@@ -1824,8 +1824,8 @@ function drawPerkPlaques() {
   for (const p of HOME_PERKS) {
     if (state.perks[p.id]) ctx.globalAlpha = 0.45;
     if (p.side) {                                   // on the right end wall, facing the player
-      rect(COLORS.gold, p.x - 5, wy + p.dy, 10, 10); rect('#2b1d10', p.x - 4, wy + p.dy + 1, 8, 8);
-      perkIcon(p.id, p.x, wy + p.dy + 5, 1);
+      rect(COLORS.gold, p.x - 5, wy + p.dy, 10, 16); rect('#2b1d10', p.x - 4, wy + p.dy + 1, 8, 14);
+      perkIcon(p.id, p.x, wy + p.dy + 8, 1, true);
       ctx.globalAlpha = 1; continue;
     }
     rect(COLORS.gold, p.x - 8, wy + 1, 16, 8);
