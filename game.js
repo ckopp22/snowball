@@ -1237,8 +1237,8 @@ function updateHomeBully(b, T, dt) {          // true when it reaches the boy
   const win = b.win === 2 ? door : state.wins[b.win];
   let tx = state.px + (b.ph - 5) * 2.5, ty = state.py;   // each chaser aims a little to one side so they spread out
   if (b.phase === 1) {
-    if (state.py > wy + 10 && Math.abs(state.px - win.x) <= CONFIG.homeRepairDist && windowAttackers(win) === 1) { b.vx = b.vy = 0; return false; }   // stalemate with the boy
-    win.hp = Math.max(0, win.hp - T.fortDamage * CONFIG.homeAttack * dt);
+    const slow = state.py > wy + 10 && Math.abs(state.px - win.x) <= CONFIG.homeRepairDist && windowAttackers(win) === 1;   // the boy is holding the window against this one enemy: it still chews, just slower
+    win.hp = Math.max(0, win.hp - T.fortDamage * CONFIG.homeAttack * (slow ? 0.4 : 1) * dt);
     if ((b.chewT = (b.chewT || 0) - dt) <= 0) {
       b.chewT = 0.6 + Math.random() * 0.4;
       if (state.time - (state.lastWood || -1) >= 0.3) { sfx('fort'); state.lastWood = state.time; }   // one crack at a time, so a crowd doesn't flood the audio
