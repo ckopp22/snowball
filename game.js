@@ -2597,7 +2597,7 @@ function drawGameOver() {
 function drawShadow() {
   const ox = CONFIG.shadowOffX, oy = CONFIG.shadowOffY;
   ctx.globalAlpha = CONFIG.shadowAlpha;
-  if (!state.runner && !state.home) ctx.drawImage(fortShadow, ox, oy);
+  if (!state.runner && !state.home && state.mode !== 'runnerlevels') ctx.drawImage(fortShadow, ox, oy);
   for (const sl of slots()) {
     const k = kidPos(sl), x = k.x + ox, y = k.y + oy;
     rect(COLORS.night, x + 1, y, 6, 7);            // hat and head
