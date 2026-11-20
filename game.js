@@ -99,6 +99,8 @@ const CONFIG = {
                swayAmp: 16, swayFreq: 0.35 }, // px and Hz of the side-to-side drift
     // Snowball Thrower: Fort mode only (Story level 4+, endless wave 15+); stops at random moments to lob a snowball at the fort
     thrower: { speedMul: 0.8, hp: 1, points: 30, fortDamage: 1, radius: 6, halfH: 7, from: 1, weight: 2, weightPer: 0.3, weightMax: 4, throws: true },
+    // Snowmobile: Fort mode only (Story level 6+, endless wave 15+); races to a spot, drops off a random enemy, drives away. Hit first = it crashes and the rider is dropped there
+    snowmobile: { speedMul: 3, hp: 1, points: 30, fortDamage: 0, radius: 8, halfH: 7, from: 1, weight: 1.5, weightPer: 0.3, weightMax: 3, drives: true },
     // Yeti: not part of the random mix (special); a fixed number of them is slipped into each wave from wave 11
     yeti:    { speedMul: 0.7, hp: 5, points: 100, fortDamage: 4, radius: 10, halfH: 10, from: 11, weight: 0, weightPer: 0, weightMax: 0, special: true },
   },
@@ -1041,7 +1043,9 @@ function startWave(n) {
 let bullyId = 0;
 
 // Throwers only show up in Fort mode: Story level 4+, or endless wave 15+ (not co-op)
-const throwerOk = wave => !state.runner && !state.home && !isCoop() && (state.story ? state.story.level >= 4 : wave >= 15);
+const fortOk = (wave, lvl) => !state.runner && !state.home && !isCoop() && (state.story ? state.story.level >= lvl : wave >= 15);
+const throwerOk = wave => fortOk(wave, 4);
+const snowmobileOk = wave => fortOk(wave, 6);
 
 // Weighted random type: newer types get likelier as waves rise, Regular stays the most common
 function pickType(wave) {
@@ -1051,6 +1055,7 @@ function pickType(wave) {
     const T = CONFIG.bullyTypes[k];
     if (T.special) continue;                         // Yetis are placed by the wave, not rolled
     if (k === 'thrower' && !throwerOk(wave)) continue;
+    if (k === 'snowmobile' && !snowmobileOk(wave)) continue;
     const w = wave >= T.from ? Math.min(T.weightMax, T.weight + T.weightPer * (wave - T.from)) : 0;
     ws.push([k, w]);
     total += w;
@@ -1060,10 +1065,17 @@ function pickType(wave) {
   return 'regular';
 }
 
-function spawnBully() {
+function pickRider() {            // the enemy a snowmobile carries
+  let t;
+  do t = pickType(state.wave); while (CONFIG.bullyTypes[t].drives);
+  return t;
+}
+
+function spawnBully(rtype, rx, ry) {   // rtype/rx/ry: place a specific enemy (a snowmobile's rider)
   // The chance rises as the wave runs out of spawns, so every Yeti of the wave is guaranteed to appear
   let type;
-  if (state.yetiLeft > 0 && Math.random() < state.yetiLeft / state.toSpawn) {
+  if (rtype) type = rtype;
+  else if (state.yetiLeft > 0 && Math.random() < state.yetiLeft / state.toSpawn) {
     type = 'yeti';
     state.yetiLeft--;
     state.popup = { text: 'YETI INCOMING!', t: 1.8 };
@@ -1079,6 +1091,7 @@ function spawnBully() {
     else if (side === 2) { x0 = CONFIG.W + T.halfH; y0 = rand(20, view.h); }
     else y0 = view.h + T.halfH;
   }
+  if (rtype) { x0 = rx; y0 = ry; }
   state.bullies.push({
     id: ++bullyId,
     type, phase: state.home && slots().every(q => pl(q).py < homeWallY() + 5) ? 4 : 0, win: state.home ? homeEntry() : 0,   // Home: 0 walk to the window/door, 1 chew it, 2 climb in, 3 chase the boy inside, 4 chase him outside, 5 leave through the door
@@ -1096,6 +1109,7 @@ function spawnBully() {
     stepSide: 1,
     flash: 0,
     ph: Math.random() * 10, // walk-cycle / sway offset
+    rider: T.drives ? pickRider() : undefined, stopY: rand(60, 110), dropped: false,   // snowmobile: its passenger and where it stops
   });
 }
 
@@ -1273,6 +1287,7 @@ function hitBully(b) {
   } else {
     b.state = 'falling';
     b.t = 0;
+    if (T.drives && !b.dropped) spawnBully(b.rider, b.x, b.y);   // crashed before the drop: the rider lands where it was hit
     state.score += T.points;
     sfx('hit');
   }
@@ -1363,6 +1378,13 @@ function updateBullies(dt) {
     if (b.flash > 0) b.flash -= dt;
     if (b.state === 'walking' && state.home) {
       if (updateHomeBully(b, T, dt)) { state.bullies.splice(i, 1); damageFort(T.fortDamage); }
+      continue;
+    }
+    if (b.state === 'walking' && T.drives) {               // Snowmobile: straight down to its stop, drop the rider, drive back off the top
+      if (!b.dropped && b.y >= b.stopY) { b.dropped = true; spawnBully(b.rider, b.x, b.y + 8); puff(b.x, b.y + 8); }
+      b.y += (b.dropped ? -1 : 1) * b.speed * dt;
+      b.vx = 0; b.vy = (b.dropped ? -1 : 1) * b.speed;
+      if (b.dropped && b.y < -T.halfH - 4) state.bullies.splice(i, 1);
       continue;
     }
     if (b.state === 'walking' && T.throws && b.y > 8) {   // Thrower: walks, then stops now and then to lob a snowball at the fort
@@ -2086,6 +2108,7 @@ function drawFort() {
 // Sprite size (w x h standing, lw x lh lying) and colours per type. r(colour, x, y, w, h) draws
 // relative to the sprite's top-left; s alternates 0/1 for the walk cycle.
 const LOOK = {
+  snowmobile: { w: 14, h: 14, lw: 16, lh: 10, hair: COLORS.ice, coat: COLORS.red },
   thrower: { w: 10, h: 14, lw: 14, lh: 8,  hair: COLORS.gold, coat: COLORS.orange },
   regular: { w: 10, h: 14, lw: 14, lh: 8,  hair: COLORS.brown },
   runner:  { w: 8,  h: 12, lw: 11, lh: 7,  hair: COLORS.hatGreen, coat: COLORS.shadow },
@@ -2096,6 +2119,16 @@ const LOOK = {
 LOOK.regular.coat = COLORS.red;
 
 const SPRITES = {
+  snowmobile: (r, s, b) => {                              // ice-blue machine with the rider on the seat; skis rattle as it goes
+    r(COLORS.night, 1, 4 + s, 2, 10); r(COLORS.night, 11, 4 + s, 2, 10);
+    r(COLORS.ice, 3, 7, 8, 6);
+    r(COLORS.red, 5, 9, 4, 2);
+    r(COLORS.gold, 6, 13, 2, 1);
+    if (!b.dropped) {
+      const L = LOOK[b.rider];
+      r(L.hair, 5, 0, 4, 2); r(COLORS.skin, 5, 2, 4, 2); r(L.coat || COLORS.red, 4, 4, 6, 3);
+    }
+  },
   thrower: (r, s) => {                                    // gold hat, orange coat, snowball held up in one hand
     r(COLORS.gold, 2, 0, 6, 2);
     r(COLORS.skin, 2, 2, 6, 4);
@@ -2165,6 +2198,12 @@ const SPRITES = {
 
 // Flat on its back, face up (shared by all types)
 function drawLying(r, L, T, type) {
+  if (type === 'snowmobile') {                            // wrecked: skewed skis and a puff of smoke
+    r(COLORS.ice, 2, 3, 12, 6); r(COLORS.red, 5, 5, 5, 2);
+    r(COLORS.night, 0, 9, 7, 1); r(COLORS.night, 9, 0, 7, 1);
+    r(COLORS.shadow, 6, 1, 2, 2); r(COLORS.shadow, 9, 2, 2, 1);
+    return;
+  }
   if (type === 'yeti') {                                  // fallen Yeti: fur blanket, dark face on the left
     r(COLORS.ice, 0, 0, 22, 12);
     r(COLORS.shadow, 0, 0, 22, 1); r(COLORS.shadow, 0, 11, 22, 1);
@@ -2192,7 +2231,7 @@ function drawBully(b) {
   if (b.state === 'walking') { ox = x - Math.round(L.w / 2); oy = y - T.halfH; }
   else { ox = x - Math.round(L.lw / 2); oy = y - Math.round(L.lh / 2); }
   const r = (c, px, py, w, h) => rect(white ? COLORS.snow : c, ox + px, oy + py, w, h);
-  if (b.state === 'walking') SPRITES[b.type](r, Math.floor(state.time * 6 + b.ph) % 2);
+  if (b.state === 'walking') SPRITES[b.type](r, Math.floor(state.time * 6 + b.ph) % 2, b);
   else drawLying(r, L, T, b.type);
   ctx.globalAlpha = 1;
   if (b.type === 'yeti' && b.state === 'walking' && b.hp > 0) {   // hit points above its head: one pip per hit left
