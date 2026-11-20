@@ -2592,6 +2592,7 @@ function updateMenuDemo(dt) {
   if (state.swing > 0) state.swing = Math.max(0, state.swing - dt);
   updateBullies(dt);
   updateParticles(dt);
+  updatePrints(dt);
   const sbs = state.snowballs;
   for (let i = sbs.length - 1; i >= 0; i--) {
     const s = sbs[i], px = s.x, py = s.y;
