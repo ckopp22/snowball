@@ -234,7 +234,7 @@ const net = { role: 'solo', status: 'idle', error: '', code: '', peer: null, con
 const isCoop = () => net.role !== 'solo';
 const slots = () => (isCoop() ? [0, 1] : [0]);
 const pl = slot => (slot === net.localSlot ? state : state.remote);   // the local player's fields live on state itself
-const freshRemote = () => ({ aimAngle: 90, aimValid: false, aiming: false, cooldown: 0, swing: 0, gun: 0, gunTimer: 0, px: 90, py: 200, walkT: 0 });
+const freshRemote = () => ({ aimAngle: 90, aimValid: false, aiming: false, cooldown: 0, swing: 0, gun: 0, gunTimer: 0, px: 90, py: 200, walkT: 0, perks: {} });
 const HURT_TIME = 0.4;                         // s the kid flashes red and hops after a hit
 function kidPos(slot) {                        // (with the hop while hurt)
   const k = kidBase(slot);
@@ -625,7 +625,7 @@ window.addEventListener('pointerdown', e => {
   initAudio();                       // browsers only allow audio after a user gesture
   const b = hitButton(toCanvas(e));
   if (b) { b.onTap(); sfx('click'); return; }
-  if (state.mode !== 'playing') return;
+  if (state.mode !== 'playing' || state.ask) return;
   if ((state.runner || state.home) && toCanvas(e).x < CONFIG.W / 2) {          // left half: floating joystick
     if (!state.stick) { const p = toCanvas(e); state.stick = { id: e.pointerId, ax: p.x, ay: p.y, dx: 0, dy: 0 }; }
     return;
@@ -697,10 +697,15 @@ const HOME_PERKS = [
 ];
 const checkpointTarget = () => Math.floor(state.wave / 5) * 5 + 5;   // next multiple of 5 above the current wave
 const checkpointOk = () => checkpointTarget() <= (isCoop() ? state.coopBests : state.bests)[mapKind()];   // only waves reached before
-function askPerk(id) { state.ask = id; setMode('perkconfirm'); }
+function askPerk(id, slot) {        // co-op: the game keeps running, only the buyer sees the confirm screen
+  if (!isCoop()) { state.ask = id; setMode('perkconfirm'); return; }
+  if (slot === net.localSlot) state.ask = id; else netSend({ k: 'q', id });
+}
 function closePerk() { state.ask = null; state.mode = 'playing'; }
-function buyPerk(p) {
-  if (state.perks[p.id] || state.score < p.cost) return;
+function buyPerk(p, slot = net.localSlot) {
+  if (net.role === 'guest') { netSend({ k: 'b', id: p.id }); return; }   // the host does the buying
+  const pp = pl(slot);
+  if (pp.perks[p.id] || state.score < p.cost) return;
   if (p.id === 'checkpoint') {                       // used on purchase: skips ahead to the next checkpoint wave
     if (!checkpointOk()) return;
     state.score -= p.cost;
@@ -710,33 +715,36 @@ function buyPerk(p) {
     return;
   }
   state.score -= p.cost;
-  state.perks[p.id] = true;
+  pp.perks[p.id] = true;
   sfx('power');
   state.popup = { text: p.name + ' BOUGHT!', t: 1.4 };
 }
-function usePerk(id) {
-  if (net.role === 'guest' || state.mode !== 'playing' || !state.perks[id] || performance.now() - (state.resumeAt || -1e9) < 500) return;   // ignore the tap that resumes from pause
+function usePerk(id, slot = net.localSlot) {
+  if (net.role === 'guest') { if (state.mode === 'playing' && state.perks[id]) netSend({ k: 'u', id }); return; }   // the host applies it
+  const pp = pl(slot);
+  if (state.mode !== 'playing' || !pp.perks[id] || performance.now() - (state.resumeAt || -1e9) < 500) return;   // ignore the tap that resumes from pause
   const wy = homeWallY(), d = state.door;
   if (id === 'health') {
     if (state.health >= CONFIG.fortHealth) { state.popup = { text: 'HEALTH FULL', t: 1.2 }; return; }
     state.health = CONFIG.fortHealth;
-    puff(state.px, state.py);
+    puff(pp.px, pp.py);
     state.popup = { text: 'HEALED!', t: 1.4 };
   } else if (id === 'avalanche') {
     state.avalanche = { y: -CONFIG.avalancheBand };
     sfx('avalanche');
     state.popup = { text: 'AVALANCHE!', t: 1.4 };
   } else if (id === 'gun') {
-    state.gun = CONFIG.gunTime; state.gunTimer = 0;
+    pp.gun = CONFIG.gunTime; pp.gunTimer = 0;
     state.popup = { text: 'MACHINE GUN!', t: 1.4 };
   } else if (id === 'door') {
     if (d.open) {                                              // closing: the boy must be safely inside, clear of the doorway
-      if (state.py < wy + 14 || (Math.abs(state.px - d.x) <= 14 && state.py < wy + 30)) { state.popup = { text: 'DOOR BLOCKED', t: 1.2 }; return; }
-      d.open = false; state.py = wy + 18;
+      const ps = slots().map(pl);
+      if (ps.some(q => q.py < wy + 14 || (Math.abs(q.px - d.x) <= 14 && q.py < wy + 30))) { state.popup = { text: 'DOOR BLOCKED', t: 1.2 }; return; }
+      d.open = false; for (const q of ps) q.py = wy + 18;
       state.popup = { text: 'DOOR CLOSED', t: 1.4 };
     } else { d.open = true; state.popup = { text: 'DOOR OPEN', t: 1.4 }; }
   }
-  state.perks[id] = false;
+  pp.perks[id] = false;
   sfx('power');
 }
 const windowAttackers = w => state.bullies.filter(b => b.state === 'walking' && b.phase === 1 && state.wins[b.win] === w).length;
@@ -747,6 +755,19 @@ const homeWalkable = (x, y) => {            // where the boy may stand (door ope
   return y >= 24 && y <= wy - 8 && x >= 8 && x <= CONFIG.W * 2 - 8;                            // yard
 };
 const homeWallY = () => view.h - 130;   // the house sits above the bottom edge so thumbs have room
+function homeRepair(dt) {                     // every boy standing at a window repairs it
+  const wy = homeWallY();
+  let fixing = null;
+  for (const w of state.wins) {
+    const n = slots().map(pl).filter(p => p.py > wy + 10 && Math.abs(p.px - w.x) <= CONFIG.homeRepairDist).length;
+    if (!n) continue;
+    const att = windowAttackers(w);
+    if (att === 1) continue;                                   // one enemy vs the boy: stalemate, nothing happens
+    if (w.hp < CONFIG.homeWinHp || att > 1) fixing = w;
+    w.hp = Math.min(CONFIG.homeWinHp, w.hp + CONFIG.homeRepair * n * dt);
+  }
+  if (fixing) { if ((state.hammerT = (state.hammerT || 0) - dt) <= 0) { sfx('hammer'); state.hammerT = 0.45; puff(fixing.x + rand(-10, 10), wy + 6, ['#8a5a2b', '#c58b4a']); } } else state.hammerT = 0;
+}
 function moveRunner(dt) {
   if (state.home) {
     const st = state.stick, wy = homeWallY();
@@ -761,14 +782,7 @@ function moveRunner(dt) {
       if (st) state.px = Math.max(CONFIG.homeL + 18, Math.min(CONFIG.homeR - 18, state.px + Math.max(-1, Math.min(1, st.dx)) * CONFIG.homeSpeed * dt));
       state.py = wy + 18;
     }
-    let fixing = null;
-    for (const w of state.wins) if (state.py > wy + 10 && Math.abs(state.px - w.x) <= CONFIG.homeRepairDist) {
-      const n = windowAttackers(w);
-      if (n === 1) continue;                                   // one enemy vs the boy: stalemate, nothing happens
-      if (w.hp < CONFIG.homeWinHp || n > 1) fixing = w;
-      w.hp = Math.min(CONFIG.homeWinHp, w.hp + CONFIG.homeRepair * dt);
-    }
-    if (fixing) { if ((state.hammerT = (state.hammerT || 0) - dt) <= 0) { sfx('hammer'); state.hammerT = 0.45; puff(fixing.x + rand(-10, 10), homeWallY() + 6, ['#8a5a2b', '#c58b4a']); } } else state.hammerT = 0;
+    if (net.role !== 'guest') homeRepair(dt);
     return;
   }
   if (!state.runner || !state.stick) return;
@@ -804,16 +818,16 @@ function update(dt) {
       const wy = homeWallY() + 5;
       if ((py - wy) * (s.y - wy) < 0) {
         const xc = px + (s.x - px) * (py - wy) / (py - s.y);
-        const pk = HOME_PERKS.find(p => !p.side && Math.abs(xc - p.x) <= 9 && Math.abs(state.px - p.x) <= 16);   // must be standing in front of it
+        const pk = HOME_PERKS.find(p => !p.side && Math.abs(xc - p.x) <= 9 && Math.abs(pl(s.owner || 0).px - p.x) <= 16);   // must be standing in front of it
         if (pk && s.auto) { puff(xc, wy); state.snowballs.splice(i, 1); continue; }   // machine-gun shots never open the buy screen
-        if (pk) { puff(xc, wy); sfx('clank'); state.snowballs.splice(i, 1); askPerk(pk.id); continue; }
+        if (pk) { puff(xc, wy); sfx('clank'); state.snowballs.splice(i, 1); askPerk(pk.id, s.owner || 0); continue; }
         const gap = state.wins.some(w => Math.abs(xc - w.x) <= CONFIG.homeWinHalf - 1) || (state.door.open && Math.abs(xc - state.door.x) <= 7);
         if (!gap) { puff(xc, wy); state.snowballs.splice(i, 1); continue; }
       }
     }
     if (state.home && s.y > homeWallY() + 5 && (s.x < CONFIG.homeL + 12 || s.x > CONFIG.homeR - 12)) {   // end walls
-      const sp = HOME_PERKS.find(p => p.side), spy = homeWallY() + sp.dy;
-      if (!s.auto && s.x > CONFIG.homeR - 12 && state.px >= CONFIG.homeR - 22 && Math.abs(state.py - spy - 8) <= 16 && s.y >= spy - 2 && s.y <= spy + 18) { puff(s.x, s.y); sfx('clank'); state.snowballs.splice(i, 1); askPerk(sp.id); continue; }
+      const sp = HOME_PERKS.find(p => p.side), spy = homeWallY() + sp.dy, bo = pl(s.owner || 0);
+      if (!s.auto && s.x > CONFIG.homeR - 12 && bo.px >= CONFIG.homeR - 22 && Math.abs(bo.py - spy - 8) <= 16 && s.y >= spy - 2 && s.y <= spy + 18) { puff(s.x, s.y); sfx('clank'); state.snowballs.splice(i, 1); askPerk(sp.id, s.owner || 0); continue; }
       puff(s.x, s.y); state.snowballs.splice(i, 1); continue;
     }
     const bh = firstBullyHit(px, py, s.x, s.y), th = firstTreeHit(px, py, s.x, s.y), ph = firstPowerHit(px, py, s.x, s.y);
@@ -873,7 +887,10 @@ function resetGame() {
   state.stick = null; state.py = state.remote.py = 200;
   state.px = CONFIG.W / 2 + (isCoop() ? (net.localSlot ? 14 : -14) : 0);
   state.remote.px = CONFIG.W / 2 + (net.localSlot ? -14 : 14);
-  if (state.home) { state.px = CONFIG.W; state.py = homeWallY() + 18; }
+  if (state.home) {
+    state.px = CONFIG.W + (isCoop() ? (net.localSlot ? 14 : -14) : 0); state.py = homeWallY() + 18;
+    state.remote.px = CONFIG.W + (net.localSlot ? -14 : 14); state.remote.py = homeWallY() + 18;
+  }
 }
 
 function setMode(m) { endAim(); state.stick = null; if (MENU_MODES.includes(m)) state.runner = state.home = false; if (state.mode === 'paused' && m === 'playing') state.resumeAt = performance.now(); state.mode = m; }
@@ -1014,7 +1031,7 @@ function spawnBully() {
   }
   state.bullies.push({
     id: ++bullyId,
-    type, phase: state.home && state.py < homeWallY() + 5 ? 4 : 0, win: state.home ? homeEntry() : 0,   // Home: 0 walk to the window/door, 1 chew it, 2 climb in, 3 chase the boy inside, 4 chase him outside, 5 leave through the door
+    type, phase: state.home && slots().every(q => pl(q).py < homeWallY() + 5) ? 4 : 0, win: state.home ? homeEntry() : 0,   // Home: 0 walk to the window/door, 1 chew it, 2 climb in, 3 chase the boy inside, 4 chase him outside, 5 leave through the door
 
     vx: 0, vy: 0,                                    // velocity, sent to the co-op guest for smooth motion
     x: x0, x0,                                       // x0 = centre column (sway is around it)
@@ -1227,7 +1244,11 @@ function puff(x, y, cols) {            // cols: optional [colorA, colorB] instea
 const homeEntry = () => (state.door.open && Math.random() < 0.34 ? 2 : (Math.random() < 0.5 ? 0 : 1));   // 0 / 1 windows, 2 door
 function updateHomeBully(b, T, dt) {          // true when it reaches the boy
   b.age += dt;
-  const wy = homeWallY(), px = b.x, py = b.y, door = state.door, boyOut = state.py < wy + 5;
+  const wy = homeWallY(), px = b.x, py = b.y, door = state.door;
+  const all = slots().map(pl), ins = all.filter(p => p.py >= wy + 5), boyOut = !ins.length;     // boyOut: every boy is outside
+  const cand = ins.length ? ins : all;
+  let tp = cand[0];                                                                                // chase the nearest boy
+  for (const p of cand) if (Math.hypot(p.px - b.x, p.py - b.y) < Math.hypot(tp.px - b.x, tp.py - b.y)) tp = p;
   if (boyOut && (b.phase === 0 || b.phase === 1)) b.phase = 4;                                  // the boy went outside: chase him there
   else if (!boyOut && b.phase === 4) { b.phase = 0; b.win = homeEntry(); }                        // he came back in: find a way in
   else if (boyOut && b.phase === 3) b.phase = door.open ? 5 : 3;                                  // follow him out of the house
@@ -1235,9 +1256,9 @@ function updateHomeBully(b, T, dt) {          // true when it reaches the boy
   if (b.phase === 5 && !door.open) b.phase = 3;
   if (b.win === 2 && !door.open && b.phase <= 1) { b.win = Math.random() < 0.5 ? 0 : 1; b.phase = 0; }   // door got closed
   const win = b.win === 2 ? door : state.wins[b.win];
-  let tx = state.px + (b.ph - 5) * 2.5, ty = state.py;   // each chaser aims a little to one side so they spread out
+  let tx = tp.px + (b.ph - 5) * 2.5, ty = tp.py;   // each chaser aims a little to one side so they spread out
   if (b.phase === 1) {
-    const slow = state.py > wy + 10 && Math.abs(state.px - win.x) <= CONFIG.homeRepairDist && windowAttackers(win) === 1;   // the boy is holding the window against this one enemy: it still chews, just slower
+    const slow = ins.some(p => p.py > wy + 10 && Math.abs(p.px - win.x) <= CONFIG.homeRepairDist) && windowAttackers(win) === 1;   // the boy is holding the window against this one enemy: it still chews, just slower
     win.hp = Math.max(0, win.hp - T.fortDamage * CONFIG.homeAttack * (slow ? 0.4 : 1) * dt);
     if ((b.chewT = (b.chewT || 0) - dt) <= 0) {
       b.chewT = 0.6 + Math.random() * 0.4;
@@ -1283,7 +1304,7 @@ function updateHomeBully(b, T, dt) {          // true when it reaches the boy
   if (b.phase === 5 && b.y < wy - 1) b.phase = 4;
   b.vx = dt > 0 ? (b.x - px) / dt : 0; b.vy = dt > 0 ? (b.y - py) / dt : 0;
   footstep(b, T, px, py);
-  return b.phase >= 2 && Math.hypot(b.x - state.px, b.y - state.py) <= 6 + T.radius;
+  return b.phase >= 2 && cand.some(p => Math.hypot(b.x - p.px, b.y - p.py) <= 6 + T.radius);
 }
 
 function updateBullies(dt) {
@@ -1580,18 +1601,29 @@ function hostOnData(d) {
   net.lastRx = performance.now(); net.lost = false;
   const r = state.remote;
   if (d.k === 'a' && Number.isFinite(d.a)) {
-    r.aimAngle = state.runner ? d.a : Math.min(CONFIG.maxAngle, Math.max(CONFIG.minAngle, d.a));
+    r.aimAngle = (state.runner || state.home) ? d.a : Math.min(CONFIG.maxAngle, Math.max(CONFIG.minAngle, d.a));
     r.aimValid = r.aiming = !!d.v;
     setRemotePos(d);
   } else if (d.k === 't' && Number.isFinite(d.a) && state.mode === 'playing' && r.cooldown <= 0.1 && r.gun <= 0) {
     setRemotePos(d);
-    throwSnowball(1, false, state.runner ? d.a : Math.min(CONFIG.maxAngle, Math.max(CONFIG.minAngle, d.a)));
+    throwSnowball(1, false, (state.runner || state.home) ? d.a : Math.min(CONFIG.maxAngle, Math.max(CONFIG.minAngle, d.a)));
+  } else if (d.k === 'u' && typeof d.id === 'string') usePerk(d.id, 1);
+  else if (d.k === 'b' && typeof d.id === 'string' && state.home && state.mode === 'playing') {
+    const p = HOME_PERKS.find(q => q.id === d.id);
+    if (p) buyPerk(p, 1);
   }
 }
 
 function setRemotePos(d) {
-  if (!state.runner || !Number.isFinite(d.x) || !Number.isFinite(d.y)) return;
-  const r = state.remote, x = clampRx(d.x), y = clampRy(d.y);
+  if (!(state.runner || state.home) || !Number.isFinite(d.x) || !Number.isFinite(d.y)) return;
+  const r = state.remote;
+  let x = clampRx(d.x), y = clampRy(d.y);
+  if (state.home) {                                       // the guest's boy stays on the floor (or the yard, door open)
+    const wy = homeWallY();
+    x = Math.max(8, Math.min(CONFIG.W * 2 - 8, d.x)); y = d.y;
+    if (!state.door.open) { x = Math.max(CONFIG.homeL + 18, Math.min(CONFIG.homeR - 18, x)); y = wy + 18; }
+    else if (!homeWalkable(x, y)) return;
+  }
   if (Math.hypot(x - r.px, y - r.py) > 0.05) r.walkT = 0.15;
   r.px = x; r.py = y;
 }
@@ -1610,7 +1642,7 @@ function buildSnapshot() {
                                STATE_IDS.indexOf(b.state), r1(b.t), b.flash > 0 ? 1 : 0, r1(b.ph), r1(b.ang), b.hp, b.phase || 0, b.win || 0]),
     S: state.snowballs.map(s => [r1(s.x), r1(s.y), r1(s.vx), r1(s.vy)]),
     av: state.avalanche ? r1(state.avalanche.y) : null,
-    ho: state.home ? { w: state.wins.map(w => r1(w.hp)), d: state.door.open ? 1 : 0, p: Object.keys(state.perks).filter(k => state.perks[k]) } : null,   // home: window boards, door, owned perks
+    ho: state.home ? { w: state.wins.map(w => r1(w.hp)), d: state.door.open ? 1 : 0, p: [state, state.remote].map(q => Object.keys(q.perks).filter(k => q.perks[k])) } : null,   // home: window boards, door, owned perks
     ev,
   };
 }
@@ -1619,6 +1651,7 @@ function guestOnData(d) {
   if (!d || typeof d !== 'object') return;
   net.lastRx = performance.now(); net.lost = false;
   if (d.k === 's') applySnapshot(d);
+  else if (d.k === 'q' && HOME_PERKS.some(p => p.id === d.id)) state.ask = d.id;   // the host says our snowball hit a plaque
 }
 
 function applySnapshot(d) {
@@ -1661,7 +1694,7 @@ function applySnapshot(d) {
   if (d.ho) {
     d.ho.w.forEach((hp, i) => { if (state.wins[i]) state.wins[i].hp = hp; });
     state.door.open = !!d.ho.d;
-    state.perks = {}; for (const k of d.ho.p) state.perks[k] = true;
+    state.perks = {}; for (const k of d.ho.p[net.localSlot]) state.perks[k] = true;
   }
   for (const e of d.ev || []) {
     if (e.e === 'p') puff(e.x, e.y);
@@ -1673,7 +1706,7 @@ function applySnapshot(d) {
 function updateGuest(dt) {
   updateFlakes(dt);
   state.time += dt;
-  if (state.mode === 'playing' && state.runner) {
+  if (state.mode === 'playing' && (state.runner || state.home)) {
     moveRunner(dt);
     if (state.stick) sendAim();
     const r = state.remote;
@@ -2160,7 +2193,7 @@ function drawHud() {
       ctx.globalAlpha = 0.5; rect(COLORS.gold, px - 1, py - 1, ps + 2, ps + 2); rect(COLORS.night, px, py, ps, ps);
       perkIcon(p.id, px + Math.floor(ps / 2), py + Math.floor(ps / 2), Math.max(1, Math.floor((ps - 4) / 5)));
       ctx.globalAlpha = 1;
-      if (state.mode === 'playing') state.buttons.push({ x: px, y: py + view.ty, w: ps, h: ps, onTap: () => usePerk(p.id) });
+      if (state.mode === 'playing' && !state.ask) state.buttons.push({ x: px, y: py + view.ty, w: ps, h: ps, onTap: () => usePerk(p.id) });
       py += ps + 4;
     }
   }
@@ -2604,7 +2637,7 @@ function draw() {
     drawBanner();
     drawPopup();
     if (state.mode === 'paused') drawPaused();
-    else if (state.mode === 'perkconfirm') drawPerkConfirm();
+    else if (state.mode === 'perkconfirm' || (state.ask && state.mode === 'playing')) drawPerkConfirm();
     else if (state.mode === 'gameover') drawGameOver();
     else if (state.mode === 'levelwin') drawLevelWin();
   }
