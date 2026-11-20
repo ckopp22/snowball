@@ -548,6 +548,7 @@ const state = {
   runner: false,       // Runner waves: the kid roams, no fort
   wantRunner: false,   // what the menu picked (co-op host starts with it)
   typeCoop: false,
+  last: false,         // Last Battle: Home with the door open, no perks, not saved as a Home best
   home: false,         // Home waves: the boy runs inside a house and throws out of its windows
   wins: [],            // home windows { x, hp }
   door: { x: 180, open: false },   // home door (perk-unlocked)
@@ -709,7 +710,7 @@ const HOME_PERKS = [
 const checkpointTarget = () => Math.floor(state.wave / 5) * 5 + 5;   // next multiple of 5 above the current wave
 const checkpointOk = () => checkpointTarget() <= (isCoop() ? state.coopBests : state.bests)[mapKind()];   // only waves reached before
 function askPerk(id, slot) {        // co-op: the game keeps running, only the buyer sees the confirm screen
-  if (state.story) return;           // no perks in Home levels
+  if (state.story || state.last) return;           // no perks in Home levels
   if (!isCoop()) { state.ask = id; setMode('perkconfirm'); return; }
   if (slot === net.localSlot) state.ask = id; else netSend({ k: 'q', id });
 }
@@ -906,19 +907,31 @@ function resetGame() {
   }
 }
 
-function setMode(m) { endAim(); state.stick = null; if (MENU_MODES.includes(m)) state.runner = state.home = false; if (state.mode === 'paused' && m === 'playing') state.resumeAt = performance.now(); state.mode = m; }
+function setMode(m) { endAim(); state.stick = null; if (MENU_MODES.includes(m)) state.runner = state.home = state.last = false; if (state.mode === 'paused' && m === 'playing') state.resumeAt = performance.now(); state.mode = m; }
 
 // DEBUG (easy to remove): open index.html?wave=8 to start at wave 8
 // DEBUG (easy to remove): open index.html?unlock=1 to show every Fort and Runner level as cleared (not saved)
-if (new URLSearchParams(location.search).get('unlock')) state.storyUnlocked = state.runnerUnlocked = CONFIG.storyLevels + 1;
+if (new URLSearchParams(location.search).get('unlock')) state.storyUnlocked = state.runnerUnlocked = state.homeUnlocked = CONFIG.storyLevels + 1;
 const DEBUG_START_WAVE = parseInt(new URLSearchParams(location.search).get('wave'), 10) || 1;
 
 function startGame(kind) {
+  state.last = false;
   if (kind !== undefined) { state.runner = kind === true; state.home = kind === 'home'; }
   resetGame();
   state.mode = 'playing';
   state.story = null;
   startWave(DEBUG_START_WAVE);
+}
+
+// Last Battle (unlocked by clearing all 10 Home levels): Home with the door open, no perks; waves carry on from 16 so every enemy type shows up
+function startLastBattle() {
+  state.runner = false; state.home = true;
+  resetGame();
+  state.last = true;
+  state.mode = 'playing';
+  state.story = null;
+  state.door.open = true;
+  startWave(16);
 }
 
 // ---- Story intro (level 1): "normal day" -> boy walks in -> shake -> he runs to the fort spot and builds it -> quote ----
@@ -1618,7 +1631,7 @@ function recordBest(score) {          // 'score' here is the wave reached
 
 function gameOver() {
   endAim();
-  if (!state.story) recordBest(state.wave);
+  if (!state.story && !state.last) recordBest(state.wave);
   awardXp(state.score);
   state.mode = 'gameover';
   sfx('over');
@@ -1754,7 +1767,7 @@ function setRemotePos(d) {
 function buildSnapshot() {
   const ev = net.evq; net.evq = [];
   return {
-    k: 's', rn: state.runner ? 1 : 0, hm: state.home ? 1 : 0, hp: [r1(state.px), r1(state.py)], m: state.mode, sc: state.score, w: state.wave, h: state.health,
+    k: 's', rn: state.runner ? 1 : 0, hm: state.home ? 1 : 0, la: state.last ? 1 : 0, hp: [r1(state.px), r1(state.py)], m: state.mode, sc: state.score, w: state.wave, h: state.health,
     fl: r1(state.flash * 10) / 10, bn: r1(state.banner), tm: r1(state.time), tr: state.treesRemoved,
     pu: state.popup ? { s: state.popup.text, t: r1(state.popup.t) } : null,
     pw: state.power ? [r1(state.power.x), r1(state.power.baseY), r1(state.power.age)] : null,
@@ -1779,7 +1792,7 @@ function guestOnData(d) {
 
 function applySnapshot(d) {
   const prev = state.mode;
-  state.runner = !!d.rn; state.home = !!d.hm;
+  state.runner = !!d.rn; state.home = !!d.hm; state.last = !!d.la;
   if (d.m === 'cooplobby') {                                           // host is in the lobby: nothing to simulate
     if (prev !== 'cooplobby') { resetGame(); state.entry = ''; setMode('cooplobby'); }
     return;
@@ -1984,7 +1997,7 @@ function perkIcon(id, cx, cy, k, rot) {
 }
 
 function drawPerkPlaques() {
-  if (state.story || state.mode === 'homelevels' || state.mode === 'runpan') return;   // no perks in Home levels
+  if (state.story || state.last || state.mode === 'homelevels' || state.mode === 'runpan') return;   // no perks in Home levels
   const wy = homeWallY();
   for (const p of HOME_PERKS) {
     if (state.perks[p.id]) ctx.globalAlpha = 0.45;
@@ -2594,6 +2607,8 @@ function drawPageBoy(p) {
     button('', bx, by, 28, 1, () => startPan(p, p - 1), COLORS.gold, 1);
     for (let i = 0; i < 5; i++) rect(COLORS.night, bx + 5 - i * 2 - 1, by - (5 - i), 2, 10 - i * 2);   // left-pointing triangle
   }
+  if (p === 2 && state.homeUnlocked > CONFIG.storyLevels)       // all Home levels cleared: the final level opens, bottom right of the house
+    button('LAST', CONFIG.W - 3 - 30, by, 60, 1.3, startLastBattle, COLORS.red, 1, 'BATTLE');
   if (pageOpen(p)) {
     const bx = CONFIG.kidX + 46;
     button('', bx, by, 28, 1, () => startPan(p, p + 1), COLORS.gold, 1);
@@ -2655,7 +2670,11 @@ function drawCoopLobby() {
   button('RUNNER', cx, y0 + step, 110, bh / h, host ? () => startGame(true) : () => {}, COLORS.hatGreen, 1, 'BEST WAVE: ' + state.coopBests.runner);
   button('HOME', cx, y0 + 2 * step, 110, bh / h, host ? () => startGame('home') : () => {}, COLORS.coatBlue, 1, 'BEST WAVE: ' + state.coopBests.home);
   ctx.globalAlpha = 1;
-  button('LEAVE', cx, y0 + 3 * step, 90, 1, leaveCoop, COLORS.shadow, 1);
+  const lb = state.homeUnlocked > CONFIG.storyLevels;
+  if (!lb || !host) ctx.globalAlpha = 0.55;
+  button('LAST BATTLE', cx, y0 + 3 * step, 110, bh / h, host && lb ? startLastBattle : () => {}, COLORS.red, 1, lb ? 'FINAL LEVEL' : 'CLEAR HOME FIRST');
+  ctx.globalAlpha = 1;
+  button('LEAVE', cx, y0 + 4 * step, 90, 1, leaveCoop, COLORS.shadow, 1);
 }
 
 function drawCoopHost() {
@@ -2739,7 +2758,7 @@ function drawGameOver() {
     button('RETRY', CONFIG.W / 2, 190, 150, 1.3, () => storyStart(state.story, state.story.level));
     button('MENU', CONFIG.W / 2, 190 + Math.ceil(btnH() * 1.3) + 10, 100, 1, () => { const m = storyMenu(state.story); resetGame(); state.story = null; setMode(m); }, COLORS.ice);
   } else if (isCoop()) button('LOBBY', CONFIG.W / 2, 190, 150, 1.3, enterLobby);
-  else button('PLAY AGAIN', CONFIG.W / 2, 190, 150, 1.3, startGame);
+  else button('PLAY AGAIN', CONFIG.W / 2, 190, 150, 1.3, state.last ? startLastBattle : startGame);
   if (isCoop()) button('MENU', CONFIG.W / 2, 190 + Math.ceil(btnH() * 1.3) + 10, 100, 1, leaveCoop, COLORS.ice);
 }
 
