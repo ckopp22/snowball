@@ -2371,15 +2371,14 @@ function drawCoopLobby() {
     button('LEAVE', cx, 120, 100, 1, leaveCoop, COLORS.ice);
     return;
   }
-  if (net.role === 'host') {
-    drawText5('CHOOSE A MAP', cx, 66, 1, COLORS.night, 'center', COLORS.snow);
-    button('FORT', cx, 100, 110, 1, () => startGame(false));
-    button('RUNNER', cx, 100 + h + 8, 110, 1, () => startGame(true), COLORS.hatGreen, 1);
-  } else {
-    const dots = '.'.repeat(1 + Math.floor(performance.now() / 400) % 3);
-    drawText5('HOST IS CHOOSING A MAP' + dots, cx, 90, 1, COLORS.coatBlue, 'center', COLORS.snow);
-  }
-  button('LEAVE', cx, net.role === 'host' ? 100 + 2 * (h + 8) + 8 : 140, 90, 1, leaveCoop, COLORS.shadow, 1);
+  const host = net.role === 'host';
+  if (host) drawText5('CHOOSE A MAP', cx, 66, 1, COLORS.night, 'center', COLORS.snow);
+  else drawText5('HOST IS CHOOSING A MAP' + '.'.repeat(1 + Math.floor(performance.now() / 400) % 3), cx, 66, 1, COLORS.coatBlue, 'center', COLORS.snow);
+  if (!host) ctx.globalAlpha = 0.55;                                   // guest sees the options but can't pick
+  button('FORT', cx, 100, 110, 1, host ? () => startGame(false) : () => {});
+  button('RUNNER', cx, 100 + h + 8, 110, 1, host ? () => startGame(true) : () => {}, COLORS.hatGreen, 1);
+  ctx.globalAlpha = 1;
+  button('LEAVE', cx, 100 + 2 * (h + 8) + 8, 90, 1, leaveCoop, COLORS.shadow, 1);
 }
 
 function drawCoopHost() {
