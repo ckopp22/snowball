@@ -2586,7 +2586,7 @@ function draw() {
 }
 
 // Title-screen background: one enemy at a time walks down, the boy snowballs it, then the next one comes
-let demoGap = 0.6;
+let demoGap = 0.6, demoFireY = 40;
 function updateMenuDemo(dt) {
   if (state.cooldown > 0) state.cooldown = Math.max(0, state.cooldown - dt);
   if (state.swing > 0) state.swing = Math.max(0, state.swing - dt);
@@ -2607,12 +2607,13 @@ function updateMenuDemo(dt) {
     state.wave = 3; state.yetiLeft = 0; spawnBully(); state.wave = w; state.yetiLeft = y;
     state.popup = null;
     demoGap = 0.6 + Math.random() * 0.9;
+    demoFireY = rand(30, CONFIG.turnY - 20);
     return;
   }
   const b = state.bullies.find(e => e.state === 'walking');
   if (!b) return;
   if (b.y > CONFIG.turnY + 20) { b.state = 'falling'; b.t = 0; puff(b.x, b.y); return; }   // a tree blocked the shots: just flop
-  if (b.y < 40 || state.cooldown > 0 || sbs.length) return;
+  if (b.y < demoFireY || state.cooldown > 0 || sbs.length) return;
   const h = handPos(0), d = Math.hypot(b.x - h.x, b.y - h.y), tt = d / CONFIG.snowballSpeed;
   const tx = b.x + b.vx * tt, ty = b.y + b.vy * tt;
   const ang = Math.min(CONFIG.maxAngle, Math.max(CONFIG.minAngle, Math.atan2(h.y - ty, tx - h.x) / DEG));
