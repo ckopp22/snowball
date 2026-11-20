@@ -27,6 +27,7 @@ On the title screen tap **CO-OP**. One player taps **CREATE GAME** and reads out
 
 - Connections are peer-to-peer (WebRTC) using [PeerJS](https://peerjs.com) 1.5.4 (MIT), vendored as `peerjs.min.js`. Pairing goes through PeerJS's free public signaling server, so both devices need internet access to connect (game data then flows directly between them).
 - Codes are 4 letters, A to Z.
+- Co-op maps: Fort, Runner and Home. Score is shared; in Home each boy owns their own perks, while the door, Health, Avalanche and Checkpoint affect the whole house.
 - Co-op can't be paused. If the other player leaves, a "Connection lost" screen returns you to the menu.
 
 ## Icons
