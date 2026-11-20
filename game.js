@@ -1418,7 +1418,7 @@ function updateBullies(dt) {
 function throwBall(b) {
   const a = Math.atan2(CONFIG.fortCY - b.y, CONFIG.fortCX - b.x), v = 90;
   state.enemyBalls.push({ x: b.x + 5, y: b.y - 6, vx: Math.cos(a) * v, vy: Math.sin(a) * v });
-  
+  sfx('throw');
 }
 
 function updateEnemyBalls(dt) {
