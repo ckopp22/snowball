@@ -136,6 +136,7 @@ const CONFIG = {
   storageKey: 'snowball_bestwave',            // best wave reached (solo, per map)
   coopStorageKey: 'snowball_coop_bestwave',   // co-op has its own best wave
   runnerKey: 'snowball_runner',                 // highest Runner level unlocked (11 = all cleared)
+  lastDoneKey: 'snowball_lastdone',             // set once the Last Battle has been won
   homeLvKey: 'snowball_homelevels',             // highest Home level unlocked (11 = all cleared)
   storyKey: 'snowball_story',                   // highest Story level unlocked
   storyLevels: 10,        // Story campaign: each level is one wave (pass or fail); level n uses wave 2n-1's difficulty
@@ -513,6 +514,7 @@ const state = {
   storyUnlocked: loadStory(),
   runnerUnlocked: loadRunner(),
   homeUnlocked: loadHomeLv(),
+  lastDone: loadBest(CONFIG.lastDoneKey) > 0,
   progress: loadProgress(),   // real level / xp-in-level (saved)
   shown: null,         // what the menu is showing; it catches up to progress with an animation
   lastXp: 0,           // score added to the bar by the game that just ended
@@ -1020,6 +1022,7 @@ function hitCastle(s) {
   if (!castleOnScreen(s.owner || 0)) return;       // shots from out of sight just bounce off
   state.score += 25;
   if (--state.castleHp > 0) return;
+  state.lastDone = true; saveBest(1, CONFIG.lastDoneKey);
   state.castleHp = 0; state.mode = 'castlewin'; state.cwT = 0; state.snowballs = [];
   awardXp(state.score); spawnConfetti(); sfx('wave');
 }
@@ -1982,7 +1985,7 @@ function guestOnData(d) {
 function applySnapshot(d) {
   const prev = state.mode;
   state.runner = !!d.rn; state.home = !!d.hm; state.last = !!d.la; state.castleHp = d.ch || 0; state.lbLimit = d.lb || 0; state.lbWave = d.lw || 0;
-  if (d.m === 'castlewin' && prev !== 'castlewin') { state.cwT = 0; spawnConfetti(); }
+  if (d.m === 'castlewin' && prev !== 'castlewin') { state.cwT = 0; spawnConfetti(); state.lastDone = true; saveBest(1, CONFIG.lastDoneKey); }
   if (d.m === 'cooplobby') {                                           // host is in the lobby: nothing to simulate
     if (prev !== 'cooplobby') { resetGame(); state.entry = ''; setMode('cooplobby'); }
     return;
@@ -2837,7 +2840,21 @@ function drawPageBoy(p) {
     for (let i = 0; i < 5; i++) rect(COLORS.night, bx + 5 - i * 2 - 1, by - (5 - i), 2, 10 - i * 2);   // left-pointing triangle
   }
   if (p === 2 && state.homeUnlocked > CONFIG.storyLevels)       // all Home levels cleared: the final level opens, bottom right of the house
-    button('LAST', CONFIG.W - 3 - 30, by, 60, 1.3, startLastBattle, COLORS.red, 1, 'BATTLE');
+  {
+    const bh = button('LAST', CONFIG.W - 3 - 30, by, 60, 1.3, startLastBattle, COLORS.red, 1, 'BATTLE'), cx = CONFIG.W - 33, t = performance.now() / 1000;
+    if (state.lastDone) {                                         // beaten: golden sparkles twinkle around the button
+      for (let i = 0; i < 10; i++) {
+        const f = (t * 1.6 + i * 0.37) % 1;
+        if (f > 0.6) continue;
+        const a = i / 10 * 4, side = Math.floor(a), u = a - side;   // walk once round the rectangle
+        const px = side === 0 ? cx - 34 + u * 68 : side === 1 ? cx + 34 : side === 2 ? cx + 34 - u * 68 : cx - 34;
+        const py = side === 0 ? by - bh / 2 - 4 : side === 1 ? by - bh / 2 - 4 + u * (bh + 8) : side === 2 ? by + bh / 2 + 4 : by + bh / 2 + 4 - u * (bh + 8);
+        const x = Math.round(px), y = Math.round(py), big = f > 0.15 && f < 0.45;
+        rect(COLORS.gold, x - 1, y, 3, 1); rect(COLORS.gold, x, y - 1, 1, 3);
+        if (big) { rect(COLORS.gold, x - 2, y, 5, 1); rect(COLORS.gold, x, y - 2, 1, 5); rect(COLORS.snow, x, y, 1, 1); }
+      }
+    }
+  }
   if (pageOpen(p)) {
     const bx = CONFIG.kidX + 46;
     button('', bx, by, 28, 1, () => startPan(p, p + 1), COLORS.gold, 1);
