@@ -221,7 +221,7 @@ function saveProgress(p) {
   try { localStorage.setItem(CONFIG.progressKey, JSON.stringify(p)); } catch (e) { /* ignore */ }
 }
 
-function loadStory() { return Math.max(1, Math.min(CONFIG.storyLevels, loadBest(CONFIG.storyKey))); }
+function loadStory() { return Math.max(1, Math.min(CONFIG.storyLevels + 1, loadBest(CONFIG.storyKey))); }
 
 function saveBest(v, key) {
   try { localStorage.setItem(key || CONFIG.storageKey, String(v)); } catch (e) { /* ignore */ }
@@ -973,7 +973,7 @@ function startStory(n) {
 
 function storyWin() {
   awardXp(state.score);
-  if (state.story.level >= state.storyUnlocked && state.storyUnlocked < CONFIG.storyLevels) {
+  if (state.story.level >= state.storyUnlocked && state.storyUnlocked <= CONFIG.storyLevels) {
     state.storyUnlocked = state.story.level + 1;
     saveBest(state.storyUnlocked, CONFIG.storyKey);
   }
@@ -2381,7 +2381,7 @@ function drawWaveType() {
 }
 
 function drawLevels() {
-  drawText5('STORY', CONFIG.W / 2, 30, 3, COLORS.coatBlue, 'center', COLORS.night);
+  drawText5('FORT', CONFIG.W / 2, 30, 3, COLORS.coatBlue, 'center', COLORS.night);
   const h = btnH();
   for (let n = 1; n <= CONFIG.storyLevels; n++) {
     const col = (n - 1) % 2, row = Math.floor((n - 1) / 2), ok = n <= state.storyUnlocked;
@@ -2397,6 +2397,12 @@ function drawLevels() {
     }
   }
   button('BACK', CONFIG.W / 2, 70 + 5 * (h + 8) + 6, 76, 1, () => setMode('title'), COLORS.ice, 1);
+}
+
+// Once all Fort levels are cleared, an arrow beside the boy leads on to the Runner levels
+function drawRunnerArrow() {
+  if (state.storyUnlocked <= CONFIG.storyLevels) return;
+  button('>', CONFIG.kidX + 30, CONFIG.kidY + 7, 28, 1, () => {}, COLORS.gold, 1);
 }
 
 function drawLevelWin() {
@@ -2619,7 +2625,7 @@ function draw() {
   drawStick();
   drawWinAlerts();
   if (state.mode === 'title') { drawLevelUi(); withInset(drawTitle); }
-  else if (state.mode === 'levels') withInset(drawLevels);
+  else if (state.mode === 'levels') { withInset(drawLevels); drawRunnerArrow(); }
   else if (state.mode === 'wavesmenu') withInset(drawWavesMenu);
   else if (state.mode === 'wavetype') withInset(drawWaveType);
   else if (state.mode === 'coopmenu') withInset(drawCoopMenu);
