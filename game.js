@@ -2444,7 +2444,15 @@ function drawRunnerLevels() {
       rect(COLORS.gold, x, y, 2, bh); rect(COLORS.gold, x + w - 2, y, 2, bh);
     }
   }
-  button('BACK', CONFIG.W / 2, 70 + 5 * (h + 8) + 6, 76, 1, () => setMode('levels'), COLORS.ice, 1);
+}
+
+// The boy waits at the bottom of the Runner screen; the arrow on his left goes back to the Fort levels
+function drawRunnerBoy(dx, arrow) {
+  drawKidAt(CONFIG.kidX + dx, CONFIG.kidY, 0, breath(0), 0);
+  if (!arrow) return;
+  const bx = CONFIG.kidX - 22, by = CONFIG.kidY + 7;
+  button('', bx, by, 28, 1, () => setMode('levels'), COLORS.gold, 1);
+  for (let i = 0; i < 5; i++) rect(COLORS.night, bx + 5 - i * 2 - 1, by - (5 - i), 2, 10 - i * 2);   // left-pointing triangle
 }
 
 function drawRunPan() {
@@ -2457,6 +2465,7 @@ function drawRunPan() {
   const bx = Math.round(CONFIG.kidX + (W + 16 - CONFIG.kidX) * Math.min(1, t / RUN_T)) - off;
   drawKidAt(bx, CONFIG.kidY, 0, 0, 1 + (Math.floor(t * 10) % 2));
   ctx.save(); ctx.translate(W - off, 0); withInset(drawRunnerLevels); ctx.restore();
+  drawRunnerBoy(W - off, false);
   state.buttons = [];
 }
 
@@ -2682,7 +2691,7 @@ function draw() {
   drawStick();
   drawWinAlerts();
   if (state.mode === 'title') { drawLevelUi(); withInset(drawTitle); }
-  else if (state.mode === 'runnerlevels') withInset(drawRunnerLevels);
+  else if (state.mode === 'runnerlevels') { withInset(drawRunnerLevels); drawRunnerBoy(0, true); }
   else if (state.mode === 'levels') { withInset(drawLevels); drawRunnerArrow(); }
   else if (state.mode === 'wavesmenu') withInset(drawWavesMenu);
   else if (state.mode === 'wavetype') withInset(drawWaveType);
