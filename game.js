@@ -497,7 +497,7 @@ const state = {
   buttons: [],         // rebuilt every frame by the draw code, used for tap tests
   score: 0,
   bests: { fort: loadBest(), runner: loadBest(CONFIG.storageKey + '_runner'), home: loadBest(CONFIG.storageKey + '_home') },   // solo best per map
-  coopBests: { fort: loadBest(CONFIG.coopStorageKey), runner: loadBest(CONFIG.coopStorageKey + '_runner') },   // co-op best per map
+  coopBests: { fort: loadBest(CONFIG.coopStorageKey), runner: loadBest(CONFIG.coopStorageKey + '_runner'), home: loadBest(CONFIG.coopStorageKey + '_home') },   // co-op best per map
   story: null,         // { level, last } while a Story level is running
   storyUnlocked: loadStory(),
   progress: loadProgress(),   // real level / xp-in-level (saved)
@@ -715,7 +715,7 @@ function buyPerk(p) {
   state.popup = { text: p.name + ' BOUGHT!', t: 1.4 };
 }
 function usePerk(id) {
-  if (state.mode !== 'playing' || !state.perks[id] || performance.now() - (state.resumeAt || -1e9) < 500) return;   // ignore the tap that resumes from pause
+  if (net.role === 'guest' || state.mode !== 'playing' || !state.perks[id] || performance.now() - (state.resumeAt || -1e9) < 500) return;   // ignore the tap that resumes from pause
   const wy = homeWallY(), d = state.door;
   if (id === 'health') {
     if (state.health >= CONFIG.fortHealth) { state.popup = { text: 'HEALTH FULL', t: 1.2 }; return; }
@@ -1600,16 +1600,17 @@ function setRemotePos(d) {
 function buildSnapshot() {
   const ev = net.evq; net.evq = [];
   return {
-    k: 's', rn: state.runner ? 1 : 0, hp: [r1(state.px), r1(state.py)], m: state.mode, sc: state.score, w: state.wave, h: state.health,
+    k: 's', rn: state.runner ? 1 : 0, hm: state.home ? 1 : 0, hp: [r1(state.px), r1(state.py)], m: state.mode, sc: state.score, w: state.wave, h: state.health,
     fl: r1(state.flash * 10) / 10, bn: r1(state.banner), tm: r1(state.time), tr: state.treesRemoved,
     pu: state.popup ? { s: state.popup.text, t: r1(state.popup.t) } : null,
     pw: state.power ? [r1(state.power.x), r1(state.power.baseY), r1(state.power.age)] : null,
     g: [r1(state.gun), r1(state.remote.gun)],                                   // machine-gun seconds left [host, guest]
     ha: [r1(state.aimAngle), state.aiming && state.aimValid ? 1 : 0, state.swing],   // host aim, for its arm and dotted line
     B: state.bullies.map(b => [b.id, TYPE_IDS.indexOf(b.type), r1(b.x), r1(b.y), r1(b.vx), r1(b.vy),
-                               STATE_IDS.indexOf(b.state), r1(b.t), b.flash > 0 ? 1 : 0, r1(b.ph), r1(b.ang), b.hp]),
+                               STATE_IDS.indexOf(b.state), r1(b.t), b.flash > 0 ? 1 : 0, r1(b.ph), r1(b.ang), b.hp, b.phase || 0, b.win || 0]),
     S: state.snowballs.map(s => [r1(s.x), r1(s.y), r1(s.vx), r1(s.vy)]),
     av: state.avalanche ? r1(state.avalanche.y) : null,
+    ho: state.home ? { w: state.wins.map(w => r1(w.hp)), d: state.door.open ? 1 : 0, p: Object.keys(state.perks).filter(k => state.perks[k]) } : null,   // home: window boards, door, owned perks
     ev,
   };
 }
@@ -1622,7 +1623,7 @@ function guestOnData(d) {
 
 function applySnapshot(d) {
   const prev = state.mode;
-  state.runner = !!d.rn;
+  state.runner = !!d.rn; state.home = !!d.hm;
   if (d.m === 'cooplobby') {                                           // host is in the lobby: nothing to simulate
     if (prev !== 'cooplobby') { resetGame(); state.entry = ''; setMode('cooplobby'); }
     return;
@@ -1652,11 +1653,16 @@ function applySnapshot(d) {
   state.bullies = d.B.map(a => {
     const b = old.get(a[0]) || { id: a[0], stepAcc: 0, stepSide: 1 };
     b.type = TYPE_IDS[a[1]]; b.x = a[2]; b.y = a[3]; b.vx = a[4]; b.vy = a[5];
-    b.state = STATE_IDS[a[6]]; b.t = a[7]; b.flash = a[8] ? CONFIG.hitFlashTime : 0; b.ph = a[9]; b.ang = a[10]; b.hp = a[11];
+    b.state = STATE_IDS[a[6]]; b.t = a[7]; b.flash = a[8] ? CONFIG.hitFlashTime : 0; b.ph = a[9]; b.ang = a[10]; b.hp = a[11]; b.phase = a[12]; b.win = a[13];
     return b;
   });
   state.snowballs = d.S.map(a => ({ x: a[0], y: a[1], vx: a[2], vy: a[3] }));
   state.avalanche = typeof d.av === 'number' ? { y: d.av } : null;
+  if (d.ho) {
+    d.ho.w.forEach((hp, i) => { if (state.wins[i]) state.wins[i].hp = hp; });
+    state.door.open = !!d.ho.d;
+    state.perks = {}; for (const k of d.ho.p) state.perks[k] = true;
+  }
   for (const e of d.ev || []) {
     if (e.e === 'p') puff(e.x, e.y);
     else if (e.e === 's') sfx(e.n, true);
@@ -2400,8 +2406,9 @@ function drawCoopLobby() {
   const bh = Math.max(h, 32), step = bh + 8, y0 = 84 + Math.ceil(bh / 2);
   button('FORT', cx, y0, 110, bh / h, host ? () => startGame(false) : () => {}, undefined, undefined, 'BEST WAVE: ' + state.coopBests.fort);
   button('RUNNER', cx, y0 + step, 110, bh / h, host ? () => startGame(true) : () => {}, COLORS.hatGreen, 1, 'BEST WAVE: ' + state.coopBests.runner);
+  button('HOME', cx, y0 + 2 * step, 110, bh / h, host ? () => startGame('home') : () => {}, COLORS.coatBlue, 1, 'BEST WAVE: ' + state.coopBests.home);
   ctx.globalAlpha = 1;
-  button('LEAVE', cx, y0 + 2 * step, 90, 1, leaveCoop, COLORS.shadow, 1);
+  button('LEAVE', cx, y0 + 3 * step, 90, 1, leaveCoop, COLORS.shadow, 1);
 }
 
 function drawCoopHost() {
