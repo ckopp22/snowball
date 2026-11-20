@@ -496,7 +496,7 @@ const state = {
   prints: [],          // footprints: { x, y, t, w }
   buttons: [],         // rebuilt every frame by the draw code, used for tap tests
   score: 0,
-  best: loadBest(),
+  bests: { fort: loadBest(), runner: loadBest('snowball_highscore_runner'), home: loadBest('snowball_highscore_home') },   // solo best per map
   coopBest: loadBest(CONFIG.coopStorageKey),
   story: null,         // { level, last } while a Story level is running
   storyUnlocked: loadStory(),
@@ -1444,11 +1444,18 @@ function updateCelebration(dt) {
 }
 
 // Solo and co-op keep separate best scores
-const bestNow = () => (isCoop() ? state.coopBest : state.best);
+const mapKind = () => (state.home ? 'home' : state.runner ? 'runner' : 'fort');
+const bestKey = k => (k === 'fort' ? CONFIG.storageKey : CONFIG.storageKey + '_' + k);
+const bestNow = () => (isCoop() ? state.coopBest : state.bests[mapKind()]);
 function recordBest(score) {
-  const co = isCoop(), k = co ? 'coopBest' : 'best';
-  state.newBest = score > state[k];
-  if (state[k] < score) { state[k] = score; saveBest(score, co ? CONFIG.coopStorageKey : CONFIG.storageKey); }
+  if (isCoop()) {
+    state.newBest = score > state.coopBest;
+    if (state.coopBest < score) { state.coopBest = score; saveBest(score, CONFIG.coopStorageKey); }
+    return;
+  }
+  const k = mapKind();
+  state.newBest = score > state.bests[k];
+  if (state.bests[k] < score) { state.bests[k] = score; saveBest(score, bestKey(k)); }
 }
 
 function gameOver() {
@@ -2268,8 +2275,6 @@ function drawUpdateBanner() {
 
 function drawTitle() {
   drawText5('SNOWBALL', CONFIG.W / 2, 50, 3, COLORS.coatBlue, 'center', COLORS.night);
-  drawBestLine('BEST: ' + state.best, 88, 0);
-  drawBestLine('CO-OP BEST: ' + state.coopBest, 102, 0.37);
   const sh = button('STORY', CONFIG.W / 2, 140, 100, 1, () => setMode('levels'), COLORS.hatGreen, 1);
   button('WAVES', CONFIG.W / 2, 140 + sh + 8, 100, 1, () => setMode('wavesmenu'));
   // level badge on the Story button's top-right corner
@@ -2292,8 +2297,6 @@ function keyBtn(label, x, y, w, h, onTap) {
 
 function drawWavesMenu() {
   drawText5('WAVES', CONFIG.W / 2, 50, 3, COLORS.coatBlue, 'center', COLORS.night);
-  drawBestLine('BEST: ' + state.best, 88, 0);
-  drawBestLine('CO-OP BEST: ' + state.coopBest, 102, 0.37);
   const h = btnH();
   button('SOLO', CONFIG.W / 2, 140, 100, 1, () => { state.typeCoop = false; setMode('wavetype'); });
   button('CO-OP', CONFIG.W / 2, 140 + h + 8, 100, 1, () => { state.typeCoop = true; setMode('wavetype'); }, COLORS.ice, 1);
@@ -2303,11 +2306,17 @@ function drawWavesMenu() {
 function chooseWaveType(r) { state.wantRunner = r === true; if (state.typeCoop) openCoopMenu(); else startGame(r); }
 function drawWaveType() {
   drawText5('WAVES', CONFIG.W / 2, 50, 3, COLORS.coatBlue, 'center', COLORS.night);
-  const h = btnH();
-  button('FORT', CONFIG.W / 2, 110, 110, 1, () => chooseWaveType(false));
-  button('RUNNER', CONFIG.W / 2, 110 + h + 8, 110, 1, () => chooseWaveType(true), COLORS.hatGreen, 1);
-  if (!state.typeCoop) button('HOME', CONFIG.W / 2, 110 + 2 * (h + 8), 110, 1, () => chooseWaveType('home'), COLORS.coatBlue, 1);
-  button('BACK', CONFIG.W / 2, 110 + (state.typeCoop ? 2 : 3) * (h + 8), 76, 1, () => setMode('wavesmenu'), COLORS.shadow, 1);
+  const h = btnH(), solo = !state.typeCoop, step = h + (solo ? 18 : 8);
+  let cy = solo ? 92 : 110;
+  const row = (label, kind, color, gap) => {
+    button(label, CONFIG.W / 2, cy, 110, 1, () => chooseWaveType(kind), color, gap);
+    if (solo) drawBestLine('BEST: ' + state.bests[kind === true ? 'runner' : kind === 'home' ? 'home' : 'fort'], cy + Math.ceil(h / 2) + 3, cy / 100);
+    cy += step;
+  };
+  row('FORT', false);
+  row('RUNNER', true, COLORS.hatGreen, 1);
+  if (solo) row('HOME', 'home', COLORS.coatBlue, 1);
+  button('BACK', CONFIG.W / 2, cy, 76, 1, () => setMode('wavesmenu'), COLORS.shadow, 1);
 }
 
 function drawLevels() {
