@@ -497,7 +497,7 @@ const state = {
   buttons: [],         // rebuilt every frame by the draw code, used for tap tests
   score: 0,
   bests: { fort: loadBest(), runner: loadBest('snowball_highscore_runner'), home: loadBest('snowball_highscore_home') },   // solo best per map
-  coopBest: loadBest(CONFIG.coopStorageKey),
+  coopBests: { fort: loadBest(CONFIG.coopStorageKey), runner: loadBest(CONFIG.coopStorageKey + '_runner') },   // co-op best per map
   story: null,         // { level, last } while a Story level is running
   storyUnlocked: loadStory(),
   progress: loadProgress(),   // real level / xp-in-level (saved)
@@ -1446,11 +1446,13 @@ function updateCelebration(dt) {
 // Solo and co-op keep separate best scores
 const mapKind = () => (state.home ? 'home' : state.runner ? 'runner' : 'fort');
 const bestKey = k => (k === 'fort' ? CONFIG.storageKey : CONFIG.storageKey + '_' + k);
-const bestNow = () => (isCoop() ? state.coopBest : state.bests[mapKind()]);
+const coopKey = k => (k === 'fort' ? CONFIG.coopStorageKey : CONFIG.coopStorageKey + '_' + k);
+const bestNow = () => (isCoop() ? state.coopBests[mapKind()] : state.bests[mapKind()]);
 function recordBest(score) {
   if (isCoop()) {
-    state.newBest = score > state.coopBest;
-    if (state.coopBest < score) { state.coopBest = score; saveBest(score, CONFIG.coopStorageKey); }
+    const k = mapKind();
+    state.newBest = score > state.coopBests[k];
+    if (state.coopBests[k] < score) { state.coopBests[k] = score; saveBest(score, coopKey(k)); }
     return;
   }
   const k = mapKind();
@@ -2375,10 +2377,13 @@ function drawCoopLobby() {
   if (host) drawText5('CHOOSE A MAP', cx, 66, 1, COLORS.night, 'center', COLORS.snow);
   else drawText5('HOST IS CHOOSING A MAP' + '.'.repeat(1 + Math.floor(performance.now() / 400) % 3), cx, 66, 1, COLORS.coatBlue, 'center', COLORS.snow);
   if (!host) ctx.globalAlpha = 0.55;                                   // guest sees the options but can't pick
-  button('FORT', cx, 100, 110, 1, host ? () => startGame(false) : () => {});
-  button('RUNNER', cx, 100 + h + 8, 110, 1, host ? () => startGame(true) : () => {}, COLORS.hatGreen, 1);
+  const step = h + 18;
+  button('FORT', cx, 96, 110, 1, host ? () => startGame(false) : () => {});
+  button('RUNNER', cx, 96 + step, 110, 1, host ? () => startGame(true) : () => {}, COLORS.hatGreen, 1);
   ctx.globalAlpha = 1;
-  button('LEAVE', cx, 100 + 2 * (h + 8) + 8, 90, 1, leaveCoop, COLORS.shadow, 1);
+  drawBestLine('BEST: ' + state.coopBests.fort, 96 + Math.ceil(h / 2) + 3, 0);
+  drawBestLine('BEST: ' + state.coopBests.runner, 96 + step + Math.ceil(h / 2) + 3, 0.37);
+  button('LEAVE', cx, 96 + 2 * step, 90, 1, leaveCoop, COLORS.shadow, 1);
 }
 
 function drawCoopHost() {
