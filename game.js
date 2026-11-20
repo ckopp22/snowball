@@ -957,7 +957,7 @@ const LB_WAVES = 5, lbWaveSize = k => 6 + 3 * k;
 const LB_LIM0 = () => homeWallY() - 120, LB_LIMF = () => CONFIG.lastTop + 24;   // how far north the boy may go at first / at the end
 
 // The snow fort at the Castle: a boy standing in it takes no damage and enemies are kept out
-const FORT_X0 = CONFIG.W - 34, FORT_X1 = CONFIG.W + 34, FORT_Y0 = CONFIG.lastTop + 56, FORT_Y1 = CONFIG.lastTop + 92;
+const FORT_X0 = CONFIG.W - 34, FORT_X1 = CONFIG.W + 34, FORT_Y0 = CONFIG.lastTop + 150, FORT_Y1 = CONFIG.lastTop + 186;   // well back from the Castle, like the Fort levels
 const inLastFort = p => state.last && p.px >= FORT_X0 + 6 && p.px <= FORT_X1 - 6 && p.py >= FORT_Y0 + 6 && p.py <= FORT_Y1 - 6;
 const anyoneInFort = () => state.last && slots().some(sl => inLastFort(pl(sl)));
 function keepOutOfFort(b, T) {          // while a boy is inside, enemies can't walk through the fort walls
@@ -970,7 +970,8 @@ function keepOutOfFort(b, T) {          // while a boy is inside, enemies can't 
 
 function updateLastBattle(dt) {
   const guards = state.bullies.filter(b => b.guard && b.state === 'walking').length;
-  if (guards < CONFIG.castleGuards && (state.guardT -= dt) <= 0) { addGuard(CONFIG.W, CONFIG.lastTop + 6, Math.floor(Math.random() * 6)); state.guardT = 3.5; }
+  const inFort = anyoneInFort();
+  if (!inFort && guards < CONFIG.castleGuards && (state.guardT -= dt) <= 0) { addGuard(CONFIG.W, CONFIG.lastTop + 6, Math.floor(Math.random() * 6)); state.guardT = 3.5; }
   const live = state.bullies.filter(b => !b.guard && b.state === 'walking').length;
   if (state.lbWave < LB_WAVES) {
     if (state.lbLeft > 0) {
@@ -985,6 +986,12 @@ function updateLastBattle(dt) {
     return;
   }
   if ((state.spawnTimer -= dt) > 0) return;       // the way is open: keep them coming at the Castle
+  if (inFort) {                                      // a boy in the fort: only Yetis, marching on it from the Castle
+    state.spawnTimer = rand(3, 4.5);
+    if (state.bullies.filter(b => b.type === 'yeti' && b.state === 'walking').length >= 4) return;
+    state.yetiLeft = 1; state.toSpawn = 1; spawnBully();
+    return;
+  }
   state.spawnTimer = rand(2, 3.2);
   if (live >= 10) return;
   if (++state.lastN % 12 === 0) { state.yetiLeft = 1; state.toSpawn = 1; }
@@ -1393,7 +1400,7 @@ const LAST_TREES = (() => {
   let seed = 20240611;
   const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
   const out = [];
-  for (let y = -780; y <= 60; y += 36 + Math.floor(rnd() * 34)) {
+  for (let y = -690; y <= 60; y += 36 + Math.floor(rnd() * 34)) {
     const n = 1 + Math.floor(rnd() * 2);
     for (let k = 0; k < n; k++) out.push([Math.round(10 + rnd() * (CONFIG.W * 2 - 28)), y]);
   }
@@ -2131,10 +2138,10 @@ function drawCastle() {
   drawCastleBody();
   ctx.restore();
   if (!won && state.castleHp > 0) {                            // health bar above it
-    const cx = CONFIG.W, y = CONFIG.lastTop - 136, w = 100;
+    const cx = CONFIG.W, y = CONFIG.lastTop - 80, w = 100;       // on the wall, between the towers
     drawText5('EVIL SNOW FORCE', cx, y - 10, 1, COLORS.snow, 'center', COLORS.night);
-    rect(COLORS.night, cx - w / 2 - 1, y - 1, w + 2, 8); rect(COLORS.shadow, cx - w / 2, y, w, 6);
-    rect(COLORS.red, cx - w / 2, y, Math.max(1, Math.round(w * state.castleHp / CONFIG.castleHp)), 6);
+    rect(COLORS.night, cx - w / 2 - 2, y - 2, w + 4, 14); rect(COLORS.snow, cx - w / 2 - 1, y - 1, w + 2, 12); rect(COLORS.shadow, cx - w / 2, y, w, 10);
+    rect(COLORS.red, cx - w / 2, y, Math.max(1, Math.round(w * state.castleHp / CONFIG.castleHp)), 10);
   }
 }
 
@@ -2544,6 +2551,11 @@ function drawHud() {
   rect(COLORS.night, 1, 12, CONFIG.fortHealth * 6 + 2, 9);
   ctx.globalAlpha = 1;
   drawText('SCORE ' + state.score, 3, 3, 1, COLORS.snow);
+  if (state.last && state.castleHp > 0) {                       // Castle health, always on screen
+    drawText('EVIL SNOW FORCE', CONFIG.W - 3, 3, 1, COLORS.snow, 'right');
+    rect(COLORS.night, 69, 11, 110, 11); rect(COLORS.shadow, 70, 12, 108, 9);
+    rect(COLORS.red, 70, 12, Math.max(1, Math.round(108 * state.castleHp / CONFIG.castleHp)), 9);
+  }
   if (!state.last) drawText(state.story ? 'LEVEL ' + state.story.level : 'WAVE ' + state.wave, CONFIG.W / 2, 3, 1, COLORS.snow, 'center');
   if (!state.last) drawText('BEST WAVE ' + Math.max(bestNow(), state.wave), CONFIG.W - 3, 3, 1, COLORS.snow, 'right');
   for (let i = 0; i < CONFIG.fortHealth; i++) drawFlake(3 + i * 6, 14, i < state.health);
@@ -3056,7 +3068,7 @@ function drawFrame() {
   if (shaking) { ctx.save(); ctx.translate(Math.round((Math.random() - 0.5) * 6), Math.round((Math.random() - 0.5) * 6)); }
   ctx.clearRect(-8, -8, CONFIG.W + 16, view.h + 16);
   state.camX = state.home ? Math.max(0, Math.min(CONFIG.W, state.px - CONFIG.W / 2)) : 0;
-  state.camY = state.last ? Math.max(CONFIG.lastTop - 70, Math.min(0, state.py - view.h / 2)) : 0;   // Last Battle: the camera follows the boy up the map, keeping him mid-screen
+  state.camY = state.last ? Math.max(CONFIG.lastTop - 120, Math.min(0, state.py - view.h / 2)) : 0;   // Last Battle: the camera follows the boy up the map, keeping him mid-screen
   if (state.home) {
     ctx.save(); ctx.translate(-Math.round(state.camX), -Math.round(state.camY));
     for (let y = Math.floor(state.camY / bg.height) * bg.height; y < state.camY + view.h; y += bg.height) { ctx.drawImage(bg, 0, y); ctx.drawImage(bg, CONFIG.W, y); }
