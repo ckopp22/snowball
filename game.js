@@ -2074,14 +2074,15 @@ function withInset(fn) {
 
 const btnH = () => Math.max(CONFIG.btnMinInternal, Math.ceil(CONFIG.btnMinPx / view.scale));
 
-function button(label, cx, cy, w, hMul, onTap, color, gap) {
+function button(label, cx, cy, w, hMul, onTap, color, gap, sub) {   // sub: small second line inside the button
   const h = Math.ceil(btnH() * hMul);
   const x = Math.round(cx - w / 2), y = Math.round(cy - h / 2);
   state.buttons.push({ x, y: y + view.ty, w, h, onTap });
   rect(COLORS.night, x - 1, y - 1, w + 2, h + 2);
   rect(color || COLORS.gold, x, y, w, h);
   rect(color ? COLORS.shadow : '#e6b92e', x, y + h - 2, w, 2);
-  drawText5(label, cx, y + Math.round((h - 14) / 2), 2, COLORS.night, 'center', undefined, gap);
+  drawText5(label, cx, sub ? y + 4 : y + Math.round((h - 14) / 2), 2, COLORS.night, 'center', undefined, gap);
+  if (sub) drawText5(sub, cx, y + 21, 1, COLORS.night, 'center');
   return h;
 }
 
@@ -2314,11 +2315,11 @@ function drawWavesMenu() {
 function chooseWaveType(r) { state.wantRunner = r === true; if (state.typeCoop) openCoopMenu(); else startGame(r); }
 function drawWaveType() {
   drawText5('WAVES', CONFIG.W / 2, 50, 3, COLORS.coatBlue, 'center', COLORS.night);
-  const h = btnH(), solo = !state.typeCoop, step = h + (solo ? 18 : 8);
-  let cy = solo ? 92 : 110;
+  const solo = !state.typeCoop, bh = solo ? Math.max(btnH(), 32) : btnH(), step = bh + 8;
+  let cy = solo ? 76 + Math.ceil(bh / 2) : 110;
   const row = (label, kind, color, gap) => {
-    button(label, CONFIG.W / 2, cy, 110, 1, () => chooseWaveType(kind), color, gap);
-    if (solo) drawBestLine('BEST WAVE: ' + state.bests[kind === true ? 'runner' : kind === 'home' ? 'home' : 'fort'], cy + Math.ceil(h / 2) + 3, cy / 100);
+    button(label, CONFIG.W / 2, cy, 110, bh / btnH(), () => chooseWaveType(kind), color, gap,
+      solo ? 'BEST WAVE: ' + state.bests[kind === true ? 'runner' : kind === 'home' ? 'home' : 'fort'] : undefined);
     cy += step;
   };
   row('FORT', false);
