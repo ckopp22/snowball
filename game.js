@@ -26,6 +26,7 @@ const CONFIG = {
   homeRepair: 3,          // window hp per second while the boy stands at it
   homeRepairDist: 20,
   homeL: 20, homeR: 340,  // the house spans these world x's; its 12 px end walls are inside, snow outside
+  lastTop: -900,          // Last Battle: world y of the Castle's base (the map runs from the house up to here)
   homeWinHalf: 22,        // half the window opening width
   stickRadius: 18,        // px the joystick knob can travel from where the thumb landed
   handDX: 11,             // where throws and the aim line start, relative to the kid's top-left
@@ -554,7 +555,7 @@ const state = {
   door: { x: 180, open: false },   // home door (perk-unlocked)
   perks: {},           // owned home perks { id: true }
   ask: null,           // perk id being confirmed
-  camX: 0,
+  camX: 0, camY: 0,
   walkT: 0,
   hurt: 0,             // timer: kid flashes red and bounces when the fort / player is hit
   px: 90, py: 200,     // runner position (centre of the kid)
@@ -765,7 +766,7 @@ const homeWalkable = (x, y) => {            // where the boy may stand (door ope
   const wy = homeWallY(), L = CONFIG.homeL + 18, R = CONFIG.homeR - 18;
   if (y >= wy + 18 && y <= wy + 54) return x >= L && x <= R;                                   // floor
   if (Math.abs(x - state.door.x) <= 5 && y >= wy - 8 && y <= wy + 54) return true;             // doorway
-  return y >= 24 && y <= wy - 8 && x >= 8 && x <= CONFIG.W * 2 - 8;                            // yard
+  return y >= (state.last ? CONFIG.lastTop + 24 : 24) && y <= wy - 8 && x >= 8 && x <= CONFIG.W * 2 - 8;   // yard
 };
 const homeWallY = () => view.h - 130 + (state.mode === 'homelevels' || state.mode === 'runpan' ? 24 : 0);   // the level-select page draws the house a little lower   // the house sits above the bottom edge so thumbs have room
 function homeRepair(dt) {                     // every boy standing at a window repairs it
@@ -854,7 +855,7 @@ function update(dt) {
       puff(th.x, th.y);
       sfx('tree');
       state.snowballs.splice(i, 1);
-    } else if (s.x < -m || s.x > (state.home ? CONFIG.W * 2 : CONFIG.W) + m || s.y < -m || s.y > view.h + m) {
+    } else if (s.x < -m || s.x > (state.home ? CONFIG.W * 2 : CONFIG.W) + m || s.y < (state.last ? CONFIG.lastTop - 90 : -m) || s.y > view.h + m) {
       state.snowballs.splice(i, 1);     // miss: just leaves the screen
     }
   }
@@ -1105,6 +1106,7 @@ function spawnBully(rtype, rx, ry) {   // rtype/rx/ry: place a specific enemy (a
     else if (side === 2) { x0 = CONFIG.W + T.halfH; y0 = rand(20, view.h); }
     else y0 = view.h + T.halfH;
   }
+  if (state.last && !rtype) y0 = Math.max(CONFIG.lastTop + 40, Math.min(-T.halfH, Math.min(...slots().map(q => pl(q).py)) - view.h / 2 - 24));   // Last Battle: they pour in from above the northernmost boy
   if (rtype) { x0 = rx; y0 = ry; }
   state.bullies.push({
     id: ++bullyId,
@@ -1392,18 +1394,19 @@ function updateBullies(dt) {
     const b = state.bullies[i], T = CONFIG.bullyTypes[b.type];
     if (b.flash > 0) b.flash -= dt;
     if (b.state === 'walking' && T.drives) {               // Snowmobile: races to its window, drops the rider, drives back to where it came from
-      const wy = homeWallY(), gx = b.dropped ? b.sx : state.wins[b.bw].x, gy = b.dropped ? b.sy : wy - 26;
+      const wy = homeWallY(), tp = state.last ? runTarget(b.x, b.y) : null;   // Last Battle: it chases the boy, not a window
+      const gx = b.dropped ? b.sx : tp ? tp.px : state.wins[b.bw].x, gy = b.dropped ? b.sy : tp ? Math.min(tp.py - 50, wy - 26) : wy - 26;
       const dx = gx - b.x, dy = gy - b.y, d = Math.hypot(dx, dy), step = b.speed * dt;
       b.ang = Math.atan2(dy, dx);
       if (d <= step) {
         b.x = gx; b.y = gy;
         if (b.dropped) { state.bullies.splice(i, 1); continue; }
-        b.dropped = true; spawnBully(b.rider, b.x, wy - 20); puff(b.x, wy - 20);
+        b.dropped = true; spawnBully(b.rider, b.x, tp ? b.y : wy - 20); puff(b.x, tp ? b.y : wy - 20);
       } else { b.x += dx / d * step; b.y += dy / d * step; }
       b.x0 = b.x; b.vx = dx / (d || 1) * b.speed; b.vy = dy / (d || 1) * b.speed;
       continue;
     }
-    if (b.state === 'walking' && T.throws && state.home && (b.phase === 0 || b.phase === 4) && b.y > 8) {   // Thrower: walks, then stops now and then to throw
+    if (b.state === 'walking' && T.throws && state.home && (b.phase === 0 || b.phase === 4) && (b.y > 8 || state.last)) {   // Thrower: walks, then stops now and then to throw
       if (b.pause > 0) {
         b.pause -= dt; b.vx = b.vy = 0;
         if (!b.thrown && b.pause < 0.4) { b.thrown = true; throwBall(b); }
@@ -1460,7 +1463,7 @@ function updateBullies(dt) {
 function throwBall(b) {              // at the nearest window or the nearest boy
   const wy = homeWallY() + 5, boys = slots().map(pl);
   let tx, ty, tgt = 'boy', wi = 0;
-  if (Math.random() < 0.5) {
+  if (Math.random() < 0.5 && !(state.last && boys.every(p => p.py < wy - 40))) {   // (no point lobbing at the windows once the boy has left the house)
     tgt = 'win'; wi = Math.abs(state.wins[0].x - b.x) <= Math.abs(state.wins[1].x - b.x) ? 0 : 1;
     tx = state.wins[wi].x; ty = wy;
   } else {
@@ -1487,7 +1490,7 @@ function updateEnemyBalls(dt) {
     }
     const hit = slots().map(pl).some(p => Math.hypot(e.x - p.px, e.y - p.py) <= 6);
     if (hit) { puff(e.x, e.y); state.enemyBalls.splice(i, 1); damageFort(1); }
-    else if (e.y > view.h + 10 || e.x < -10 || e.x > CONFIG.W * 2 + 10 || e.y < -10) state.enemyBalls.splice(i, 1);
+    else if (e.y > view.h + 10 || e.x < -10 || e.x > CONFIG.W * 2 + 10 || e.y < (state.last ? CONFIG.lastTop - 90 : -10)) state.enemyBalls.splice(i, 1);
   }
 }
 
@@ -1950,6 +1953,23 @@ function drawHome() {
 }
 
 // Decorative furniture on the floor (the boy walks in front of it)
+// Last Battle: the Evil Snow Force's castle at the top of the map, centred over the door
+function drawCastle() {
+  const cx = CONFIG.W, y = CONFIG.lastTop, G = '#6e7a8a', D = '#4a5563', K = '#2f3744';
+  rect(K, cx - 62, y - 52, 124, 54); rect(G, cx - 60, y - 50, 120, 50);                       // wall
+  for (let x = cx - 60; x < cx + 60; x += 8) { rect(K, x - 1, y - 60, 7, 11); rect(G, x, y - 59, 5, 9); }   // battlements
+  for (let k = 0; k < 4; k++) rect(D, cx - 60, y - 40 + k * 12, 120, 1);                      // stone courses
+  for (const sx of [cx - 76, cx + 52]) {                                                       // towers
+    rect(K, sx - 1, y - 92, 26, 94); rect(D, sx, y - 90, 24, 90);
+    for (let x = sx; x < sx + 24; x += 8) { rect(K, x - 1, y - 100, 7, 10); rect(D, x, y - 99, 5, 9); }
+    rect(K, sx + 11, y - 120, 2, 20); rect(COLORS.red, sx + 13, y - 120, 9, 6);                  // flag
+    rect(K, sx + 9, y - 70, 6, 10); rect(COLORS.red, sx + 10, y - 69, 4, 8);                     // glowing window
+  }
+  rect(K, cx - 14, y - 36, 28, 36); rect(COLORS.night, cx - 12, y - 34, 24, 34);              // gate
+  rect(K, cx - 12, y - 36, 24, 3);
+  for (let x = cx - 10; x <= cx + 8; x += 6) rect(D, x, y - 32, 1, 32);                        // portcullis
+}
+
 function drawFurniture() {
   const y = homeWallY();
   rect('#7a2e2e', 154, y + 36, 52, 20);                       // area rug
@@ -2851,14 +2871,20 @@ function drawFrame() {
   if (shaking) { ctx.save(); ctx.translate(Math.round((Math.random() - 0.5) * 6), Math.round((Math.random() - 0.5) * 6)); }
   ctx.clearRect(-8, -8, CONFIG.W + 16, view.h + 16);
   state.camX = state.home ? Math.max(0, Math.min(CONFIG.W, state.px - CONFIG.W / 2)) : 0;
-  if (state.home) { ctx.save(); ctx.translate(-Math.round(state.camX), 0); ctx.drawImage(bg, 0, 0); ctx.drawImage(bg, CONFIG.W, 0); ctx.restore(); }
+  state.camY = state.last ? Math.max(CONFIG.lastTop - 70, Math.min(0, state.py - view.h / 2)) : 0;   // Last Battle: the camera follows the boy up the map, keeping him mid-screen
+  if (state.home) {
+    ctx.save(); ctx.translate(-Math.round(state.camX), -Math.round(state.camY));
+    for (let y = Math.floor(state.camY / bg.height) * bg.height; y < state.camY + view.h; y += bg.height) { ctx.drawImage(bg, 0, y); ctx.drawImage(bg, CONFIG.W, y); }
+    ctx.restore();
+  }
   else ctx.drawImage(bg, 0, 0);
   drawFlakes();
   if (cut) { drawCutscene(); if (shaking) ctx.restore(); drawCelebration(); return; }
-  if (state.home) { ctx.save(); ctx.translate(-Math.round(state.camX), 0); }
+  if (state.home) { ctx.save(); ctx.translate(-Math.round(state.camX), -Math.round(state.camY)); }
   drawShadow();
   drawPrints();
   drawHome();
+  if (state.last) drawCastle();
   drawTreesAndBullies();
   drawPower();
   drawAvalanche();
