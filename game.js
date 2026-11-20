@@ -2462,14 +2462,9 @@ function drawRunPan() {
   drawFlakes();
   ctx.save(); ctx.translate(-off, 0); drawTreesAndBullies(); drawFort(); ctx.restore();
   ctx.save(); ctx.translate(W - off, 0); drawTreesAndBullies(); ctx.restore();
-  const r = Math.min(1, t / RUN_T), step = 1 + (Math.floor(t * 10) % 2);
-  if (back) {
-    drawKidAt(Math.round(W + CONFIG.kidX - (CONFIG.kidX + 16) * r) - off, CONFIG.kidY, 0, 0, t < RUN_T ? step : 0);   // runs off the left edge of the Runner screen
-    if (t >= RUN_T) drawKidAt(CONFIG.kidX - off, CONFIG.kidY, 0, breath(0), 0);                                       // the Fort boy slides in
-  } else {
-    drawKidAt(Math.round(CONFIG.kidX + (W + 16 - CONFIG.kidX) * r) - off, CONFIG.kidY, 0, 0, step);
-    drawRunnerBoy(W - off, false);
-  }
+  // One boy runs the whole way across both screens (world x), so he never stops or swaps with a second boy
+  const u = Math.min(1, t / (RUN_T + PAN_T)), x0 = back ? W + CONFIG.kidX : CONFIG.kidX, x1 = back ? CONFIG.kidX : W + CONFIG.kidX;
+  drawKidAt(Math.round(x0 + (x1 - x0) * u) - off, CONFIG.kidY, 0, 0, 1 + (Math.floor(t * 10) % 2));
   ctx.save(); ctx.translate(W - off, 0); withInset(drawRunnerLevels); ctx.restore();
   state.buttons = [];
 }
