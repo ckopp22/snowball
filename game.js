@@ -709,6 +709,7 @@ const HOME_PERKS = [
 const checkpointTarget = () => Math.floor(state.wave / 5) * 5 + 5;   // next multiple of 5 above the current wave
 const checkpointOk = () => checkpointTarget() <= (isCoop() ? state.coopBests : state.bests)[mapKind()];   // only waves reached before
 function askPerk(id, slot) {        // co-op: the game keeps running, only the buyer sees the confirm screen
+  if (state.story) return;           // no perks in Home levels
   if (!isCoop()) { state.ask = id; setMode('perkconfirm'); return; }
   if (slot === net.localSlot) state.ask = id; else netSend({ k: 'q', id });
 }
@@ -1983,6 +1984,7 @@ function perkIcon(id, cx, cy, k, rot) {
 }
 
 function drawPerkPlaques() {
+  if (state.story) return;           // no perks in Home levels
   const wy = homeWallY();
   for (const p of HOME_PERKS) {
     if (state.perks[p.id]) ctx.globalAlpha = 0.45;
