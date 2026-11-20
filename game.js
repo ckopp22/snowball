@@ -693,11 +693,22 @@ const HOME_PERKS = [
   { id: 'avalanche', name: 'AVALANCHE', x: 150, cost: 1000 },
   { id: 'gun', name: 'MACHINE GUN', x: 210, cost: 500 },
   { id: 'door', name: 'DOOR', x: 240, cost: 500 },
+  { id: 'checkpoint', name: 'CHECKPOINT', x: 325, cost: 500 },
 ];
+const checkpointTarget = () => Math.floor(state.wave / 5) * 5 + 5;   // next multiple of 5 above the current wave
+const checkpointOk = () => checkpointTarget() <= (isCoop() ? state.coopBests : state.bests)[mapKind()];   // only waves reached before
 function askPerk(id) { state.ask = id; setMode('perkconfirm'); }
 function closePerk() { state.ask = null; state.mode = 'playing'; }
 function buyPerk(p) {
   if (state.perks[p.id] || state.score < p.cost) return;
+  if (p.id === 'checkpoint') {                       // used on purchase: skips ahead to the next checkpoint wave
+    if (!checkpointOk()) return;
+    state.score -= p.cost;
+    state.bullies = [];
+    startWave(checkpointTarget());
+    state.popup = { text: 'CHECKPOINT!', t: 1.4 };
+    return;
+  }
   state.score -= p.cost;
   state.perks[p.id] = true;
   sfx('power');
@@ -1802,6 +1813,7 @@ function perkIcon(id, cx, cy, k) {
   }
   else if (id === 'avalanche') { r(COLORS.snow, 0, -2, 1, 1); r(COLORS.snow, -1, -1, 3, 1); r(COLORS.ice, -2, 0, 5, 3); }
   else if (id === 'gun') { r(COLORS.ice, -2, -1, 5, 2); r(COLORS.ice, 2, -1, 2, 1); r(COLORS.ice, -2, 1, 2, 2); }
+  else if (id === 'checkpoint') { r(COLORS.red, -2, -2, 1, 5); r(COLORS.red, -1, -2, 4, 3); }
   else { r('#c58b4a', -2, -2, 5, 5); r('#6b4423', -1, -1, 3, 4); r(COLORS.gold, 1, 1, 1, 1); }
 }
 
@@ -2436,8 +2448,10 @@ function drawPerkConfirm() {
   drawTextShadow(p.name, cx, 94, 2, COLORS.snow, 'center');
   drawTextShadow('COST ' + p.cost, cx, 116, 1, COLORS.gold, 'center');
   drawTextShadow('YOU HAVE ' + state.score, cx, 128, 1, COLORS.snow, 'center');
-  if (state.perks[p.id] || state.score < p.cost) {
-    drawTextShadow(state.perks[p.id] ? 'ALREADY OWNED' : 'NOT ENOUGH POINTS', cx, 144, 1, COLORS.red, 'center');
+  const noCp = p.id === 'checkpoint' && !checkpointOk();
+  if (p.id === 'checkpoint') drawTextShadow('SKIP TO WAVE ' + checkpointTarget(), cx, 104, 1, COLORS.ice, 'center');
+  if (state.perks[p.id] || state.score < p.cost || noCp) {
+    drawTextShadow(state.perks[p.id] ? 'ALREADY OWNED' : noCp ? 'NOT REACHED YET' : 'NOT ENOUGH POINTS', cx, 144, 1, COLORS.red, 'center');
     button('OK', cx, 175, 90, 1, closePerk, COLORS.ice, 1);
   } else {
     button('BUY', cx, 165, 100, 1, () => { buyPerk(p); closePerk(); }, COLORS.hatGreen, 1);
