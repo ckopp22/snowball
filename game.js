@@ -129,6 +129,7 @@ const CONFIG = {
   storageKey: 'snowball_bestwave',            // best wave reached (solo, per map)
   coopStorageKey: 'snowball_coop_bestwave',   // co-op has its own best wave
   runnerKey: 'snowball_runner',                 // highest Runner level unlocked (11 = all cleared)
+  homeLvKey: 'snowball_homelevels',             // highest Home level unlocked (11 = all cleared)
   storyKey: 'snowball_story',                   // highest Story level unlocked
   storyLevels: 10,        // Story campaign: each level is one wave (pass or fail); level n uses wave 2n-1's difficulty
   progressKey: 'snowball_progress',             // { level, xp } saved on this device
@@ -223,6 +224,7 @@ function saveProgress(p) {
 }
 
 function loadRunner() { return Math.max(1, Math.min(CONFIG.storyLevels + 1, loadBest(CONFIG.runnerKey))); }
+function loadHomeLv() { return Math.max(1, Math.min(CONFIG.storyLevels + 1, loadBest(CONFIG.homeLvKey))); }
 function loadStory() { return Math.max(1, Math.min(CONFIG.storyLevels + 1, loadBest(CONFIG.storyKey))); }
 
 function saveBest(v, key) {
@@ -503,6 +505,7 @@ const state = {
   story: null,         // { level, last } while a Story level is running
   storyUnlocked: loadStory(),
   runnerUnlocked: loadRunner(),
+  homeUnlocked: loadHomeLv(),
   progress: loadProgress(),   // real level / xp-in-level (saved)
   shown: null,         // what the menu is showing; it catches up to progress with an animation
   lastXp: 0,           // score added to the bar by the game that just ended
@@ -899,8 +902,8 @@ function resetGame() {
 function setMode(m) { endAim(); state.stick = null; if (MENU_MODES.includes(m)) state.runner = state.home = false; if (state.mode === 'paused' && m === 'playing') state.resumeAt = performance.now(); state.mode = m; }
 
 // DEBUG (easy to remove): open index.html?wave=8 to start at wave 8
-// DEBUG (easy to remove): open index.html?unlock=1 to show every Fort level as cleared (not saved)
-if (new URLSearchParams(location.search).get('unlock')) state.storyUnlocked = CONFIG.storyLevels + 1;
+// DEBUG (easy to remove): open index.html?unlock=1 to show every Fort and Runner level as cleared (not saved)
+if (new URLSearchParams(location.search).get('unlock')) state.storyUnlocked = state.runnerUnlocked = CONFIG.storyLevels + 1;
 const DEBUG_START_WAVE = parseInt(new URLSearchParams(location.search).get('wave'), 10) || 1;
 
 function startGame(kind) {
@@ -986,9 +989,28 @@ function startRunnerLevel(n) {            // Runner level n: no fort, clear a se
   state.yetiLeft = n < 3 ? 0 : Math.min(CONFIG.yetiMax, 1 + Math.floor((n - 3) / 2));   // Yetis mixed in from level 3: 1, +1 every 2 levels
 }
 
+function startHomeLevel(n) {              // Home level n: defend the house, clear a set number of enemies; difficulty follows wave 2n-1
+  state.runner = false; state.home = true;
+  resetGame();
+  state.mode = 'playing';
+  state.story = { level: n, home: true };
+  startWave(2 * n - 1);
+  state.toSpawn = 8 + 3 * n;
+  state.yetiLeft = n < 3 ? 0 : Math.min(CONFIG.yetiMax, 1 + Math.floor((n - 3) / 2));
+}
+
+// Re-enter / leave the current story level, whichever page it belongs to
+const storyStart = (st, n) => (st.home ? startHomeLevel : st.runner ? startRunnerLevel : startStory)(n);
+const storyMenu = st => st.home ? 'homelevels' : st.runner ? 'runnerlevels' : 'levels';
+
 function storyWin() {
   awardXp(state.score);
-  if (state.story.runner) {
+  if (state.story.home) {
+    if (state.story.level >= state.homeUnlocked && state.homeUnlocked <= CONFIG.storyLevels) {
+      state.homeUnlocked = state.story.level + 1;
+      saveBest(state.homeUnlocked, CONFIG.homeLvKey);
+    }
+  } else if (state.story.runner) {
     if (state.story.level >= state.runnerUnlocked && state.runnerUnlocked <= CONFIG.storyLevels) {
       state.runnerUnlocked = state.story.level + 1;
       saveBest(state.runnerUnlocked, CONFIG.runnerKey);
@@ -1113,7 +1135,7 @@ function firstBullyHit(ax, ay, bx, by) {
 
 // ---- Power-ups ----
 const rand = (a, b) => a + Math.random() * (b - a);
-const MENU_MODES = ['title', 'levels', 'wavesmenu', 'wavetype', 'coopmenu', 'coophost', 'coopjoin', 'cooplobby', 'runnerlevels', 'runpan'];
+const MENU_MODES = ['title', 'levels', 'wavesmenu', 'wavetype', 'coopmenu', 'coophost', 'coopjoin', 'cooplobby', 'runnerlevels', 'homelevels', 'runpan'];
 
 // Segment-vs-circle; returns t (0..1 along the snowball's path this frame) or null
 function firstPowerHit(ax, ay, bx, by) {
@@ -2419,24 +2441,21 @@ function drawLevels() {
   button('BACK', CONFIG.W / 2, 70 + 5 * (h + 8) + 6, 76, 1, () => setMode('title'), COLORS.ice, 1);
 }
 
-// Once all Fort levels are cleared, an arrow beside the boy leads on to the Runner levels
-function drawRunnerArrow() {
-  if (state.storyUnlocked <= CONFIG.storyLevels) return;
-  const bx = CONFIG.kidX + 46, by = CONFIG.kidY + 7;
-  button('', bx, by, 28, 1, () => { state.pan = { t: 0 }; setMode('runpan'); }, COLORS.gold, 1);
-  for (let i = 0; i < 5; i++) rect(COLORS.night, bx - 5 + i * 2, by - (5 - i), 2, 10 - i * 2);   // right-pointing triangle
-}
+// Level-select pages sit side by side: 0 Fort, 1 Runner, 2 Home. The boy runs between them.
+const PAGE_MODES = ['levels', 'runnerlevels', 'homelevels'];
+const RUN_T = 0.9, PAN_T = 1.0;   // seconds: boy runs off, then the screen pans to the next page
+const pageOpen = p => p === 0 ? state.storyUnlocked > CONFIG.storyLevels : p === 1 && state.runnerUnlocked > CONFIG.storyLevels;   // is the next page unlocked from page p
 
-const RUN_T = 0.9, PAN_T = 1.0;   // seconds: boy runs off to the right, then the screen pans to the Runner levels
+function startPan(from, to) { state.pan = { t: 0, from, to }; setMode('runpan'); }
 
-function drawRunnerLevels() {
-  drawText5('RUNNER', CONFIG.W / 2, 30, 3, COLORS.coatBlue, 'center', COLORS.night);
+function drawLevelPage(title, unlocked, start) {
+  drawText5(title, CONFIG.W / 2, 30, 3, COLORS.coatBlue, 'center', COLORS.night);
   const h = btnH();
   for (let n = 1; n <= 10; n++) {
     const col = (n - 1) % 2, row = Math.floor((n - 1) / 2);
-    const cx = CONFIG.W / 2 + (col ? 34 : -34), cy = 70 + row * (h + 8), ok = n <= state.runnerUnlocked, next = n === state.runnerUnlocked + 1;
+    const cx = CONFIG.W / 2 + (col ? 34 : -34), cy = 70 + row * (h + 8), ok = n <= unlocked, next = n === unlocked + 1;
     if (!ok && !next) ctx.globalAlpha = 0.55;
-    button(String(n), cx, cy, 56, 1, ok ? () => startRunnerLevel(n) : () => {}, ok || next ? COLORS.hatGreen : COLORS.shadow, 1);
+    button(String(n), cx, cy, 56, 1, ok ? () => start(n) : () => {}, ok || next ? COLORS.hatGreen : COLORS.shadow, 1);
     ctx.globalAlpha = 1;
     if (next) {
       const x = Math.round(cx - 28) - 3, y = Math.round(cy - h / 2) - 3, w = 62, bh = h + 6;
@@ -2445,27 +2464,35 @@ function drawRunnerLevels() {
     }
   }
 }
+const drawRunnerLevels = () => drawLevelPage('RUNNER', state.runnerUnlocked, startRunnerLevel);
+const drawHomeLevels = () => drawLevelPage('HOME', state.homeUnlocked, startHomeLevel);
 
-// The boy waits at the bottom of the Runner screen; the arrow on his left goes back to the Fort levels
-function drawRunnerBoy(dx, arrow) {
-  drawKidAt(CONFIG.kidX + dx, CONFIG.kidY, 0, breath(0), 0);
-  if (!arrow) return;
-  const bx = CONFIG.kidX - 38, by = CONFIG.kidY + 7;
-  button('', bx, by, 28, 1, () => { state.pan = { t: 0, back: true }; setMode('runpan'); }, COLORS.gold, 1);
-  for (let i = 0; i < 5; i++) rect(COLORS.night, bx + 5 - i * 2 - 1, by - (5 - i), 2, 10 - i * 2);   // left-pointing triangle
+// The boy stands at the bottom of each page (the Fort page draws him itself); gold arrows beside him lead to the neighbouring pages
+function drawPageBoy(p) {
+  if (p > 0) drawKidAt(CONFIG.kidX, CONFIG.kidY, 0, breath(0), 0);
+  const by = CONFIG.kidY + 7;
+  if (p > 0) {
+    const bx = CONFIG.kidX - 38;
+    button('', bx, by, 28, 1, () => startPan(p, p - 1), COLORS.gold, 1);
+    for (let i = 0; i < 5; i++) rect(COLORS.night, bx + 5 - i * 2 - 1, by - (5 - i), 2, 10 - i * 2);   // left-pointing triangle
+  }
+  if (pageOpen(p)) {
+    const bx = CONFIG.kidX + 46;
+    button('', bx, by, 28, 1, () => startPan(p, p + 1), COLORS.gold, 1);
+    for (let i = 0; i < 5; i++) rect(COLORS.night, bx - 5 + i * 2, by - (5 - i), 2, 10 - i * 2);   // right-pointing triangle
+  }
 }
 
 function drawRunPan() {
-  const { t, back } = state.pan, W = CONFIG.W, k = Math.min(1, Math.max(0, (t - RUN_T) / PAN_T)), e = k * k * (3 - 2 * k);
-  const off = Math.round((back ? 1 - e : e) * W);        // forward pans right to the Runner screen, back pans left to the Fort
-  ctx.drawImage(bg, -off, 0); ctx.drawImage(bg, W - off, 0);
+  const { t, from, to } = state.pan, W = CONFIG.W, k = Math.min(1, Math.max(0, (t - RUN_T) / PAN_T)), e = k * k * (3 - 2 * k);
+  const cam = Math.round((from + (to - from) * e) * W);
+  for (let p = 0; p < 3; p++) ctx.drawImage(bg, p * W - cam, 0);
   drawFlakes();
-  ctx.save(); ctx.translate(-off, 0); drawTreesAndBullies(); drawFort(); ctx.restore();
-  ctx.save(); ctx.translate(W - off, 0); drawTreesAndBullies(); ctx.restore();
-  // One boy runs the whole way across both screens (world x), so he never stops or swaps with a second boy
-  const u = Math.min(1, t / (RUN_T + PAN_T)), x0 = back ? W + CONFIG.kidX : CONFIG.kidX, x1 = back ? CONFIG.kidX : W + CONFIG.kidX;
-  drawKidAt(Math.round(x0 + (x1 - x0) * u) - off, CONFIG.kidY, 0, 0, 1 + (Math.floor(t * 10) % 2));
-  ctx.save(); ctx.translate(W - off, 0); withInset(drawRunnerLevels); ctx.restore();
+  for (let p = 0; p < 3; p++) { ctx.save(); ctx.translate(p * W - cam, 0); drawTreesAndBullies(); if (p === 0) drawFort(); ctx.restore(); }
+  // One boy runs the whole way (world x), so he never stops or swaps with a second boy
+  const u = Math.min(1, t / (RUN_T + PAN_T)), x0 = from * W + CONFIG.kidX, x1 = to * W + CONFIG.kidX;
+  drawKidAt(Math.round(x0 + (x1 - x0) * u) - cam, CONFIG.kidY, 0, 0, 1 + (Math.floor(t * 10) % 2));
+  for (const [p, fn] of [[1, drawRunnerLevels], [2, drawHomeLevels]]) { ctx.save(); ctx.translate(p * W - cam, 0); withInset(fn); ctx.restore(); }
   state.buttons = [];
 }
 
@@ -2475,8 +2502,8 @@ function drawLevelWin() {
   drawTextShadow(last ? 'YOU WIN!' : 'LEVEL ' + n + ' CLEAR', CONFIG.W / 2, 60, 2, COLORS.gold, 'center');
   drawTextShadow('SCORE: ' + state.score, CONFIG.W / 2, 100, 2, COLORS.snow, 'center');
   let y = 150;
-  if (!last) y += button('NEXT LEVEL', CONFIG.W / 2, y, 140, 1.3, () => state.story.runner ? startRunnerLevel(n + 1) : startStory(n + 1)) + 10;
-  button('MENU', CONFIG.W / 2, y + Math.ceil(btnH() / 2) + (last ? 0 : 6), 100, 1, () => { const rn = state.story.runner; resetGame(); state.story = null; setMode(rn ? 'runnerlevels' : 'levels'); }, COLORS.ice);
+  if (!last) y += button('NEXT LEVEL', CONFIG.W / 2, y, 140, 1.3, () => storyStart(state.story, n + 1)) + 10;
+  button('MENU', CONFIG.W / 2, y + Math.ceil(btnH() / 2) + (last ? 0 : 6), 100, 1, () => { const m = storyMenu(state.story); resetGame(); state.story = null; setMode(m); }, COLORS.ice);
 }
 
 function drawCoopMenu() {
@@ -2586,8 +2613,8 @@ function drawGameOver() {
   if (state.lastXp > 0) drawText5('+' + state.lastXp + ' TO YOUR LEVEL BAR', CONFIG.W / 2, 160, 1, COLORS.snow, 'center', COLORS.night);
   if (net.role === 'guest') drawTextShadow('WAITING FOR HOST...', CONFIG.W / 2, 184, 1, COLORS.snow, 'center');
   else if (state.story) {
-    button('RETRY', CONFIG.W / 2, 190, 150, 1.3, () => state.story.runner ? startRunnerLevel(state.story.level) : startStory(state.story.level));
-    button('MENU', CONFIG.W / 2, 190 + Math.ceil(btnH() * 1.3) + 10, 100, 1, () => { const rn = state.story.runner; resetGame(); state.story = null; setMode(rn ? 'runnerlevels' : 'levels'); }, COLORS.ice);
+    button('RETRY', CONFIG.W / 2, 190, 150, 1.3, () => storyStart(state.story, state.story.level));
+    button('MENU', CONFIG.W / 2, 190 + Math.ceil(btnH() * 1.3) + 10, 100, 1, () => { const m = storyMenu(state.story); resetGame(); state.story = null; setMode(m); }, COLORS.ice);
   } else if (isCoop()) button('LOBBY', CONFIG.W / 2, 190, 150, 1.3, enterLobby);
   else button('PLAY AGAIN', CONFIG.W / 2, 190, 150, 1.3, startGame);
   if (isCoop()) button('MENU', CONFIG.W / 2, 190 + Math.ceil(btnH() * 1.3) + 10, 100, 1, leaveCoop, COLORS.ice);
@@ -2597,7 +2624,7 @@ function drawGameOver() {
 function drawShadow() {
   const ox = CONFIG.shadowOffX, oy = CONFIG.shadowOffY;
   ctx.globalAlpha = CONFIG.shadowAlpha;
-  if (!state.runner && !state.home && state.mode !== 'runnerlevels') ctx.drawImage(fortShadow, ox, oy);
+  if (!state.runner && !state.home && state.mode !== 'runnerlevels' && state.mode !== 'homelevels') ctx.drawImage(fortShadow, ox, oy);
   for (const sl of slots()) {
     const k = kidPos(sl), x = k.x + ox, y = k.y + oy;
     rect(COLORS.night, x + 1, y, 6, 7);            // hat and head
@@ -2679,7 +2706,7 @@ function draw() {
   drawTreesAndBullies();
   drawPower();
   drawAvalanche();
-  const away = state.mode === 'runnerlevels';   // the fort and boy are left behind on the Runner screen
+  const away = state.mode === 'runnerlevels' || state.mode === 'homelevels';   // the fort and boy are left behind on the Runner screen
   if (!state.runner && !state.home && !away) drawFort();
   if (!away) for (const sl of slots()) drawKid(sl);
   for (const sl of slots()) drawArm(sl);
@@ -2691,8 +2718,9 @@ function draw() {
   drawStick();
   drawWinAlerts();
   if (state.mode === 'title') { drawLevelUi(); withInset(drawTitle); }
-  else if (state.mode === 'runnerlevels') { withInset(drawRunnerLevels); drawRunnerBoy(0, true); }
-  else if (state.mode === 'levels') { withInset(drawLevels); drawRunnerArrow(); }
+  else if (state.mode === 'runnerlevels') { withInset(drawRunnerLevels); drawPageBoy(1); }
+  else if (state.mode === 'homelevels') { withInset(drawHomeLevels); drawPageBoy(2); }
+  else if (state.mode === 'levels') { withInset(drawLevels); drawPageBoy(0); }
   else if (state.mode === 'wavesmenu') withInset(drawWavesMenu);
   else if (state.mode === 'wavetype') withInset(drawWaveType);
   else if (state.mode === 'coopmenu') withInset(drawCoopMenu);
@@ -2760,7 +2788,7 @@ function frame(now) {
   if (net.role === 'guest' && (state.mode === 'playing' || state.mode === 'gameover')) updateGuest(dt);   // the host runs the world
   else if (state.mode === 'playing') update(dt);
   else if (state.mode === 'cutscene') { updateFlakes(dt); updateCutscene(dt); }
-  else if (state.mode === 'runpan') { updateFlakes(dt); if ((state.pan.t += dt) >= RUN_T + PAN_T) setMode(state.pan.back ? 'levels' : 'runnerlevels'); }
+  else if (state.mode === 'runpan') { updateFlakes(dt); if ((state.pan.t += dt) >= RUN_T + PAN_T) setMode(PAGE_MODES[state.pan.to]); }
   else if (state.mode !== 'paused') updateFlakes(dt);   // snow keeps falling on menus / game over
   if (state.mode === 'splash' && (splashT += dt) >= SPLASH_TIME) setMode('title');
   if (isCoop()) netTick(dt);
