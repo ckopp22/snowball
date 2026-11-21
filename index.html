@@ -29,7 +29,7 @@
       if (hadController) window.dispatchEvent(new Event('snowball-update'));
     });
     window.addEventListener('load', function () {
-      navigator.serviceWorker.register('./sw.js').then(function (reg) {
+      navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' }).then(function (reg) {
         var check = function () { reg.update().catch(function () {}); };
         document.addEventListener('visibilitychange', function () { if (!document.hidden) check(); });
         setInterval(check, 30 * 60 * 1000);

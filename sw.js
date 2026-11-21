@@ -1,5 +1,5 @@
 // Bump CACHE_VERSION whenever any game file changes so installed copies update.
-const CACHE_VERSION = 'snowball-v133';
+const CACHE_VERSION = 'snowball-v134';
 
 const FILES = [
   './',
@@ -16,7 +16,7 @@ const FILES = [
 
 self.addEventListener('install', event => {
   event.waitUntil(
-    caches.open(CACHE_VERSION).then(cache => cache.addAll(FILES)).then(() => self.skipWaiting())
+    caches.open(CACHE_VERSION).then(cache => cache.addAll(FILES.map(u => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting())
   );
 });
 
