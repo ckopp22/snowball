@@ -27,7 +27,7 @@ const CONFIG = {
   homeRepairDist: 20,
   homeL: 20, homeR: 340,  // the house spans these world x's; its 12 px end walls are inside, snow outside
   castleHp: 60,           // Last Battle: snowball hits to bring the Castle down
-  castleGuards: 4,        // enemies standing guard in front of it
+  castleGuards: 2,        // fast little enemies standing guard in front of it (they throw themselves in front of snowballs)
   lastTop: -900,          // Last Battle: world y of the Castle's base (the map runs from the house up to here)
   homeWinHalf: 22,        // half the window opening width
   stickRadius: 18,        // px the joystick knob can travel from where the thumb landed
@@ -945,14 +945,14 @@ function startLastBattle() {
   state.story = null;
   state.door.open = true;
   startWave(16);
-  state.castleHp = CONFIG.castleHp; state.cwT = 0; state.lastN = 0; state.guardT = 0; state.spawnTimer = CONFIG.firstSpawnDelay;
+  state.castleHp = CONFIG.castleHp; state.cwT = 0; state.lastN = 0; state.guardT = 2; state.spawnTimer = CONFIG.firstSpawnDelay;
   state.banner = 0; state.lbWave = 0; state.lbLeft = lbWaveSize(0); state.lbLimit = LB_LIM0();
   for (let k = 0; k < CONFIG.castleGuards; k++) addGuard(CONFIG.W - 60 + k * 24, CONFIG.lastTop + 30, k);
 }
 
 // A Castle guard: stands in front of the Castle and slides along the line between the boy and the Castle to block shots; turns on a boy who gets close
 function addGuard(x, y, k) {
-  spawnBully(pickRider(), x, y);
+  spawnBully('runner', x, y);
   const b = state.bullies[state.bullies.length - 1];
   b.guard = true; b.phase = 4; b.gy = CONFIG.lastTop + 24 + (k % 3) * 18; b.go = (k - 2.5) * 9;
 }
@@ -980,7 +980,8 @@ function spawnLastYetis() {            // the chosen badge = number of Yetis tha
 function updateLastBattle(dt) {
   const guards = state.bullies.filter(b => b.guard && b.state === 'walking').length;
   const inFort = anyoneInFort();
-  if (!inFort && guards < CONFIG.castleGuards && (state.guardT -= dt) <= 0) { addGuard(CONFIG.W, CONFIG.lastTop + 6, Math.floor(Math.random() * 6)); state.guardT = 3.5; }
+  if (guards >= CONFIG.castleGuards) state.guardT = 2;          // a new one comes out of the Castle 2 s after one is hit
+  else if (!inFort && (state.guardT -= dt) <= 0) { addGuard(CONFIG.W, CONFIG.lastTop + 6, guards); state.guardT = 2; }
   const live = state.bullies.filter(b => !b.guard && b.state === 'walking').length;
   if (state.lbWave < LB_WAVES) {
     if (state.lbLeft > 0) {
@@ -1583,8 +1584,9 @@ function updateBullies(dt) {
       if (Math.hypot(tp.px - b.x, tp.py - b.y) < 90) { b.guard = false; b.phase = 4; }
       else {
         const cx = CONFIG.W, cy = CONFIG.lastTop - 20, below = tp.py > b.gy + 8;
-        let tx = below ? tp.px + (cx - tp.px) * (tp.py - b.gy) / (tp.py - cy) : cx;
-        tx = Math.max(cx - 70, Math.min(cx + 70, tx + b.go));
+        let tx = below ? tp.px + (cx - tp.px) * (tp.py - b.gy) / (tp.py - cy) : cx, inc = null;
+        for (const s of state.snowballs) if (s.vy < 0 && s.y > b.gy && inCastle({ x: s.x + s.vx * (s.y - CONFIG.lastTop) / -s.vy, y: CONFIG.lastTop }) && (!inc || s.y < inc.y)) inc = s;   // a snowball heading for the Castle
+        tx = inc ? inc.x + inc.vx * (inc.y - b.gy) / -inc.vy : Math.max(cx - 70, Math.min(cx + 70, tx + b.go));   // jump in its way
         const dx = tx - b.x, dy = b.gy - b.y, d = Math.hypot(dx, dy), step = b.speed * 1.6 * dt;
         const mx = d <= step ? dx : dx / d * step, my = d <= step ? dy : dy / d * step;
         b.x += mx; b.y += my; b.x0 = b.x; b.vx = dt > 0 ? mx / dt : 0; b.vy = dt > 0 ? my / dt : 0;
