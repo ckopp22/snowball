@@ -247,7 +247,7 @@ const net = { role: 'solo', status: 'idle', error: '', code: '', peer: null, con
 const isCoop = () => net.role !== 'solo';
 const slots = () => (isCoop() ? [0, 1] : [0]);
 const pl = slot => (slot === net.localSlot ? state : state.remote);   // the local player's fields live on state itself
-const freshRemote = () => ({ aimAngle: 90, aimValid: false, aiming: false, cooldown: 0, swing: 0, gun: 0, gunTimer: 0, px: 90, py: 200, walkT: 0, perks: {} });
+const freshRemote = () => ({ aimAngle: 90, aimValid: false, aiming: false, cooldown: 0, swing: 0, gun: 0, gunTimer: 0, px: 90, py: 200, walkT: 0, perks: {}, score: 0 });
 const HURT_TIME = 0.4;                         // s the kid flashes red and hops after a hit
 function kidPos(slot) {                        // (with the hop while hurt)
   const k = kidBase(slot);
@@ -726,16 +726,16 @@ function closePerk() { state.ask = null; state.mode = 'playing'; }
 function buyPerk(p, slot = net.localSlot) {
   if (net.role === 'guest') { netSend({ k: 'b', id: p.id }); return; }   // the host does the buying
   const pp = pl(slot);
-  if (pp.perks[p.id] || state.score < p.cost) return;
+  if (pp.perks[p.id] || pp.score < p.cost) return;
   if (p.id === 'checkpoint') {                       // used on purchase: skips ahead to the next checkpoint wave
     if (!checkpointOk()) return;
-    state.score -= p.cost;
+    pp.score -= p.cost;
     state.bullies = [];
     startWave(checkpointTarget());
     state.popup = { text: 'CHECKPOINT!', t: 1.4 };
     return;
   }
-  state.score -= p.cost;
+  pp.score -= p.cost;
   pp.perks[p.id] = true;
   sfx('power');
   state.popup = { text: p.name + ' BOUGHT!', t: 1.4 };
@@ -751,7 +751,7 @@ function usePerk(id, slot = net.localSlot) {
     puff(pp.px, pp.py);
     state.popup = { text: 'HEALED!', t: 1.4 };
   } else if (id === 'avalanche') {
-    state.avalanche = { y: -CONFIG.avalancheBand };
+    state.avalanche = { y: -CONFIG.avalancheBand, owner: slot };
     sfx('avalanche');
     state.popup = { text: 'AVALANCHE!', t: 1.4 };
   } else if (id === 'gun') {
@@ -857,7 +857,7 @@ function update(dt) {
       collectPower(s.owner || 0);
       state.snowballs.splice(i, 1);
     } else if (bh && (!th || bh.t <= th.t)) {  // one snowball, one bully
-      hitBully(bh.b);
+      hitBully(bh.b, s.owner || 0);
       state.snowballs.splice(i, 1);
     } else if (th) {                    // trees stop snowballs
       puff(th.x, th.y);
@@ -1019,7 +1019,7 @@ const inCastle = s => Math.abs(s.x - CONFIG.W) <= 76 && s.y >= CONFIG.lastTop - 
 function hitCastle(s) {
   puff(s.x, s.y, ['#6e7a8a', COLORS.snow]); sfx('clank');
   if (!castleOnScreen(s.owner || 0)) return;       // shots from out of sight just bounce off
-  state.score += 25;
+  pl(s.owner || 0).score += 25;
   if (--state.castleHp > 0) return;
   state.lastDone = true; saveBest(1, CONFIG.lastDoneKey);
   state.castleHp = 0; state.mode = 'castlewin'; state.cwT = 0; state.snowballs = [];
@@ -1287,7 +1287,7 @@ function updateWaves(dt) {
     if (!state.bullies.some(b => b.state === 'walking')) {
       state.waveEnded = true;
       state.breakTimer = CONFIG.waveBreak;
-      state.score += CONFIG.waveBonus;
+      for (const sl of slots()) pl(sl).score += CONFIG.waveBonus;
       if (state.story) state.winTimer = 2;
     }
   } else if (state.winTimer > 0) {
@@ -1454,7 +1454,7 @@ function avoidTrees(b, T, want) {
   return want + Math.max(-1.4, Math.min(1.4, turn));
 }
 
-function hitBully(b) {
+function hitBully(b, owner = 0) {
   const T = CONFIG.bullyTypes[b.type];
   b.hp--;
   if (b.hp > 0) {                       // Big Kid survives the first hit: white flash
@@ -1464,7 +1464,7 @@ function hitBully(b) {
     b.state = 'falling';
     b.t = 0;
     if (T.drives && !b.dropped) spawnBully(b.rider, b.x, b.y);   // crashed before the drop: the rider lands where it was hit
-    state.score += T.points;
+    pl(owner).score += T.points;
     sfx('hit');
   }
   puff(b.x, b.y);
@@ -1690,7 +1690,7 @@ function updateAvalanche(dt) {
   for (const b of state.bullies) {
     if (b.state === 'walking' && b.y <= av.y && b.y > av.y - CONFIG.avalancheBand) {   // inside the band (new spawns behind it are safe)
       b.hp = 1;                                  // one hit left, so this drops even a Big Kid
-      hitBully(b);
+      hitBully(b, av.owner || 0);
     }
   }
   avalancheFx(dt);
@@ -1958,7 +1958,7 @@ function setRemotePos(d) {
 function buildSnapshot() {
   const ev = net.evq; net.evq = [];
   return {
-    k: 's', rn: state.runner ? 1 : 0, hm: state.home ? 1 : 0, la: state.last ? 1 : 0, ch: state.castleHp, lb: r1(state.lbLimit), lw: state.lbWave, hp: [r1(state.px), r1(state.py)], m: state.mode, sc: state.score, w: state.wave, h: state.health,
+    k: 's', rn: state.runner ? 1 : 0, hm: state.home ? 1 : 0, la: state.last ? 1 : 0, ch: state.castleHp, lb: r1(state.lbLimit), lw: state.lbWave, hp: [r1(state.px), r1(state.py)], m: state.mode, sc: [pl(0).score, pl(1).score], w: state.wave, h: state.health,
     fl: r1(state.flash * 10) / 10, bn: r1(state.banner), tm: r1(state.time), tr: state.treesRemoved,
     pu: state.popup ? { s: state.popup.text, t: r1(state.popup.t) } : null,
     pw: state.power ? [r1(state.power.x), r1(state.power.baseY), r1(state.power.age)] : null,
@@ -1993,11 +1993,11 @@ function applySnapshot(d) {
   if (d.m === 'gameover' && prev === 'playing') {
     endAim();
     recordBest(d.w);
-    awardXp(d.sc);
+    awardXp(d.sc[net.localSlot]);
   }
   state.mode = d.m;
   if (d.fl > state.flash + 0.01) state.hurt = HURT_TIME;                // the host's fort/player was hit
-  state.score = d.sc; state.wave = d.w; state.health = d.h; state.flash = d.fl; state.banner = d.bn;
+  state.score = d.sc[net.localSlot]; state.remote.score = d.sc[1 - net.localSlot]; state.wave = d.w; state.health = d.h; state.flash = d.fl; state.banner = d.bn;
   state.time = d.tm; state.treesRemoved = d.tr;
   state.popup = d.pu ? { text: d.pu.s, t: d.pu.t } : null;
   state.power = d.pw ? { x: d.pw[0], baseY: d.pw[1], y: d.pw[1] + Math.sin(d.pw[2] * 2.5) * 3, age: d.pw[2] } : null;
