@@ -1043,19 +1043,19 @@ function updateCastleWin(dt) {
 }
 
 // Ending timeline (seconds since the Castle fell): victory text, fade to black, "return home" text, the boy walks back down and stops, the screen shakes with the last line, fade out to the menu
-const END_T = { fade: 7.5, black: 9, textOut: 15.7, scene: 18.5, stop: 23.5, line2: 25.5, shake: 27.3, out: 30.5 };   // 2 s gaps between each beat
+const END_T = { fade: 7.5, black: 9, textOut: 15.7, scene: 18.5, stop: 23.5, shake: 25.3, line2: 27.8, out: 31.5 };   // shake = when the shaking stops and the townsfolk start running; line2 appears once they're gone
 const fadeIn = (t, a, d) => Math.max(0, Math.min(1, (t - a) / d));
 
-// Townfolk cheer (jumping, arms up) on both sides of the boy, then run off the screen when the shaking starts
-const FOLK = [[-26, 'hatGreen', 'coatBlue', 0], [-46, 'red', 'orange', 1], [-66, 'pink', 'hatGreen', 2], [-86, 'gold', 'red', 3], [-106, 'coatBlue', 'pink', 4],
-              [26, 'orange', 'red', 5], [46, 'blonde', 'coatBlue', 6], [66, 'red', 'hatGreen', 7], [86, 'hatGreen', 'gold', 8], [106, 'pink', 'coatBlue', 9]];
+// Townfolk cheer (jumping, arms up) in two vertical rows along the boy's path, then run off the screen once the shaking stops
+const FOLK = [[-24, 'hatGreen', 'coatBlue', 0], [-24, 'red', 'orange', 1], [-24, 'pink', 'hatGreen', 2], [-24, 'gold', 'red', 3], [-24, 'coatBlue', 'pink', 4],
+              [24, 'orange', 'red', 5], [24, 'blonde', 'coatBlue', 6], [24, 'red', 'hatGreen', 7], [24, 'hatGreen', 'gold', 8], [24, 'pink', 'coatBlue', 9]];
 function drawTownfolk(t, W, H) {
-  const T = END_T, fl = Math.max(0, t - T.stop);
+  const T = END_T, fl = Math.max(0, t - T.shake);
   for (const [dx, hat, coat, i] of FOLK) {
     const side = dx < 0 ? -1 : 1, x = Math.round(W / 2 - 4 + dx + side * fl * (60 + i * 6));
     if (x < -10 || x > W + 10) continue;
     const jump = fl > 0 ? 0 : Math.round(Math.abs(Math.sin(t * 7 + i * 1.3)) * 6), run = fl > 0 ? 1 + (Math.floor(t * 10) % 2) : 0;
-    const y = H / 2 - 7 - jump + (i % 3) * 3, h = COLORS[hat], c = COLORS[coat];
+    const y = H / 2 - 7 - jump - (i % 5) * 20, h = COLORS[hat], c = COLORS[coat];
     rect(COLORS.snow, x + 3, y, 2, 1); rect(h, x + 1, y + 1, 6, 2); rect(COLORS.snow, x, y + 3, 8, 1);
     rect(COLORS.skin, x + 1, y + 4, 6, 3); rect(COLORS.black, x + 2, y + 5, 1, 1); rect(COLORS.black, x + 5, y + 5, 1, 1);
     rect(c, x + 1, y + 7, 6, 6);
