@@ -158,6 +158,7 @@ const COLORS = {
   gold: '#ffd23f', hatGreen: '#3fa34d',
   orange: '#f28c28', // scarf (simplest addition to the palette)
   red: '#d93b3b',
+  pink: '#ff7eb6', blonde: '#f5d97a',
 };
 
 // ---------- Canvas setup ----------
@@ -2377,7 +2378,7 @@ function drawFort() {
 // relative to the sprite's top-left; s alternates 0/1 for the walk cycle.
 const LOOK = {
   snowmobile: { w: 14, h: 14, lw: 16, lh: 10, hair: COLORS.ice, coat: COLORS.red },
-  thrower: { w: 10, h: 14, lw: 14, lh: 8,  hair: COLORS.gold, coat: COLORS.orange },
+  thrower: { w: 10, h: 14, lw: 14, lh: 8,  hair: COLORS.blonde, coat: COLORS.pink },
   regular: { w: 10, h: 14, lw: 14, lh: 8,  hair: COLORS.brown },
   runner:  { w: 8,  h: 12, lw: 11, lh: 7,  hair: COLORS.hatGreen, coat: COLORS.shadow },
   big:     { w: 14, h: 16, lw: 16, lh: 11, hair: COLORS.black, coat: COLORS.coatBlue },
@@ -2397,12 +2398,13 @@ const SPRITES = {
       r(L.hair, 5, 0, 4, 2); r(COLORS.skin, 5, 2, 4, 2); r(L.coat || COLORS.red, 4, 4, 6, 3);
     }
   },
-  thrower: (r, s) => {                                    // gold hat, orange coat, snowball held up in one hand
-    r(COLORS.gold, 2, 0, 6, 2);
+  thrower: (r, s) => {                                    // girl: blonde hair, pink coat, snowball held up in one hand
+    r(COLORS.blonde, 2, 0, 6, 2);
+    r(COLORS.blonde, 1, 2, 1, 5); r(COLORS.blonde, 8, 2, 1, 5);
     r(COLORS.skin, 2, 2, 6, 4);
     r(COLORS.black, 3, 3, 1, 1); r(COLORS.black, 6, 3, 1, 1);
-    r(COLORS.orange, 1, 6, 8, 5);
-    r(COLORS.orange, 0, 6, 1, 4); r(COLORS.orange, 9, 3, 1, 4);
+    r(COLORS.pink, 1, 7, 8, 4);
+    r(COLORS.pink, 0, 7, 1, 3); r(COLORS.pink, 9, 3, 1, 4);
     r(COLORS.snow, 9, 0, 3, 3);
     r(COLORS.black, 2, 11, 2, 3 - s);
     r(COLORS.black, 6, 11, 2, 2 + s);
