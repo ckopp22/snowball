@@ -136,6 +136,7 @@ const CONFIG = {
   storageKey: 'snowball_bestwave',            // best wave reached (solo, per map)
   coopStorageKey: 'snowball_coop_bestwave',   // co-op has its own best wave
   runnerKey: 'snowball_runner',                 // highest Runner level unlocked (11 = all cleared)
+  lastLvKey: 'snowball_lastlv',                 // highest Last Battle badge (Yetis at the Castle) beaten
   lastDoneKey: 'snowball_lastdone',             // set once the Last Battle has been won
   homeLvKey: 'snowball_homelevels',             // highest Home level unlocked (11 = all cleared)
   storyKey: 'snowball_story',                   // highest Story level unlocked
@@ -516,6 +517,8 @@ const state = {
   runnerUnlocked: loadRunner(),
   homeUnlocked: loadHomeLv(),
   lastDone: loadBest(CONFIG.lastDoneKey) > 0,
+  lastLv: Math.max(loadBest(CONFIG.lastLvKey), loadBest(CONFIG.lastDoneKey) > 0 ? 1 : 0),   // badges beaten; the next one is unlocked
+  lastSel: 1,          // badge chosen for the next Last Battle = Yetis that spawn at the Castle
   progress: loadProgress(),   // real level / xp-in-level (saved)
   shown: null,         // what the menu is showing; it catches up to progress with an animation
   lastXp: 0,           // score added to the bar by the game that just ended
@@ -971,6 +974,9 @@ function keepOutOfFort(b, T) {          // while a boy is inside, enemies can't 
   b.x0 = b.x;
 }
 
+function spawnLastYetis() {            // the chosen badge = number of Yetis that come out of the Castle together
+  for (let i = 0; i < state.lastSel; i++) { state.yetiLeft = 1; state.toSpawn = 1; spawnBully(); }
+}
 function updateLastBattle(dt) {
   const guards = state.bullies.filter(b => b.guard && b.state === 'walking').length;
   const inFort = anyoneInFort();
@@ -978,7 +984,7 @@ function updateLastBattle(dt) {
   const live = state.bullies.filter(b => !b.guard && b.state === 'walking').length;
   if (state.lbWave < LB_WAVES) {
     if (state.lbLeft > 0) {
-      if ((state.spawnTimer -= dt) <= 0) { state.lbLeft--; state.spawnTimer = rand(1.2, 2); if (++state.lastN % 12 === 0) { state.yetiLeft = 1; state.toSpawn = 1; } spawnBully(); }
+      if ((state.spawnTimer -= dt) <= 0) { state.lbLeft--; state.spawnTimer = rand(1.2, 2); if (++state.lastN % 12 === 0) spawnLastYetis(); else spawnBully(); }
     } else if (live === 0) {            // wave beaten: the way north opens a little
       state.lbWave++;
       state.lbLimit = LB_LIM0() + (LB_LIMF() - LB_LIM0()) * state.lbWave / LB_WAVES;
@@ -991,14 +997,13 @@ function updateLastBattle(dt) {
   if ((state.spawnTimer -= dt) > 0) return;       // the way is open: keep them coming at the Castle
   if (inFort) {                                      // a boy in the fort: only Yetis, marching on it from the Castle
     state.spawnTimer = rand(3, 4.5);
-    if (state.bullies.filter(b => b.type === 'yeti' && b.state === 'walking').length >= 1) return;
-    state.yetiLeft = 1; state.toSpawn = 1; spawnBully();
+    if (state.bullies.filter(b => b.type === 'yeti' && b.state === 'walking').length >= state.lastSel) return;
+    spawnLastYetis();
     return;
   }
   state.spawnTimer = rand(2, 3.2);
   if (live >= 10) return;
-  if (++state.lastN % 12 === 0) { state.yetiLeft = 1; state.toSpawn = 1; }
-  spawnBully();
+  if (++state.lastN % 12 === 0) spawnLastYetis(); else spawnBully();
 }
 
 // The barrier across the map while the next wave isn't beaten, and the fort at the Castle
@@ -1022,6 +1027,7 @@ function hitCastle(s) {
   pl(s.owner || 0).score += 25;
   if (--state.castleHp > 0) return;
   state.lastDone = true; saveBest(1, CONFIG.lastDoneKey);
+  if (state.lastSel > state.lastLv) { state.lastLv = state.lastSel; saveBest(state.lastLv, CONFIG.lastLvKey); }
   state.castleHp = 0; state.mode = 'castlewin'; state.cwT = 0; state.snowballs = [];
   awardXp(state.score); spawnConfetti(); sfx('wave');
 }
@@ -2841,7 +2847,13 @@ function drawPageBoy(p) {
   }
   if (p === 2 && state.homeUnlocked > CONFIG.storyLevels)       // all Home levels cleared: the final level opens, bottom right of the house
   {
+    state.lastSel = Math.min(state.lastSel, state.lastLv + 1);
     const bh = button('LAST', CONFIG.W - 3 - 30, by, 60, 1.3, startLastBattle, COLORS.red, 1, 'BATTLE'), cx = CONFIG.W - 33, t = performance.now() / 1000;
+    if (state.lastLv > 0) {                                       // badge: tap to pick how many Yetis guard the Castle (up to one past the highest beaten)
+      const bx = cx + 30, byy = by - Math.round(bh / 2) - 2;
+      button('', bx, byy, 20, 0.6, () => { state.lastSel = state.lastSel > state.lastLv ? 1 : state.lastSel + 1; }, COLORS.gold, 1);
+      drawText5(String(state.lastSel), bx, byy - 4, 1, COLORS.night, 'center');
+    }
     if (state.lastDone) {                                         // beaten: golden sparkles twinkle around the button
       for (let i = 0; i < 10; i++) {
         const f = (t * 1.6 + i * 0.37) % 1;
