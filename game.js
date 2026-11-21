@@ -1045,6 +1045,25 @@ function updateCastleWin(dt) {
 const END_T = { fade: 7.5, black: 9, textOut: 15.7, scene: 18.5, stop: 23.5, line2: 25.5, shake: 27.3, out: 30.5 };   // 2 s gaps between each beat
 const fadeIn = (t, a, d) => Math.max(0, Math.min(1, (t - a) / d));
 
+// Townfolk cheer (jumping, arms up) on both sides of the boy, then run off the screen when the shaking starts
+const FOLK = [[-26, 'hatGreen', 'coatBlue', 0], [-46, 'red', 'orange', 1], [-66, 'pink', 'hatGreen', 2], [-86, 'gold', 'red', 3], [-106, 'coatBlue', 'pink', 4],
+              [26, 'orange', 'red', 5], [46, 'blonde', 'coatBlue', 6], [66, 'red', 'hatGreen', 7], [86, 'hatGreen', 'gold', 8], [106, 'pink', 'coatBlue', 9]];
+function drawTownfolk(t, W, H) {
+  const T = END_T, fl = Math.max(0, t - T.stop);
+  for (const [dx, hat, coat, i] of FOLK) {
+    const side = dx < 0 ? -1 : 1, x = Math.round(W / 2 - 4 + dx + side * fl * (60 + i * 6));
+    if (x < -10 || x > W + 10) continue;
+    const jump = fl > 0 ? 0 : Math.round(Math.abs(Math.sin(t * 7 + i * 1.3)) * 6), run = fl > 0 ? 1 + (Math.floor(t * 10) % 2) : 0;
+    const y = H / 2 - 7 - jump + (i % 3) * 3, h = COLORS[hat], c = COLORS[coat];
+    rect(COLORS.snow, x + 3, y, 2, 1); rect(h, x + 1, y + 1, 6, 2); rect(COLORS.snow, x, y + 3, 8, 1);
+    rect(COLORS.skin, x + 1, y + 4, 6, 3); rect(COLORS.black, x + 2, y + 5, 1, 1); rect(COLORS.black, x + 5, y + 5, 1, 1);
+    rect(c, x + 1, y + 7, 6, 6);
+    if (fl > 0) { rect(c, x - 1, y + 8, 2, 3); rect(c, x + 7, y + 8, 2, 3); }               // arms swing while running
+    else { rect(c, x - 1, y + 3, 2, 5); rect(c, x + 7, y + 3, 2, 5); rect(COLORS.skin, x - 1, y + 2, 2, 1); rect(COLORS.skin, x + 7, y + 2, 2, 1); }   // arms up
+    rect(COLORS.black, x + 2, y + 13 - (run === 1 ? 1 : 0), 2, 2); rect(COLORS.black, x + 4, y + 13 - (run === 2 ? 1 : 0), 2, 2);
+  }
+}
+
 function drawEnding() {
   const t = state.cwT, W = CONFIG.W, H = view.h, T = END_T;
   state.buttons = [];
@@ -1062,6 +1081,7 @@ function drawEnding() {
   drawFlakes();
   const k = Math.min(1, (t - T.scene) / (T.stop - T.scene)), y = Math.round(-14 + (H / 2 - 7 + 14) * k);
   drawKidAt(Math.round(W / 2 - 4), y, 0, k >= 1 ? breath(0) : 0, k >= 1 ? 0 : 1 + (Math.floor(t * 8) % 2));
+  drawTownfolk(t, W, H);
   if (t >= T.line2) {
     ctx.globalAlpha = fadeIn(t, T.line2, 0.8);
     drawText5('...UNTIL YOU NEED TO', W / 2, H / 2 + 30, 1, COLORS.night, 'center', COLORS.snow);
