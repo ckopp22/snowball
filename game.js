@@ -2852,6 +2852,7 @@ function drawLevelPage(title, unlocked, start) {
       rect(COLORS.gold, x, y, 2, bh); rect(COLORS.gold, x + w - 2, y, 2, bh);
     }
   }
+  button('BACK', CONFIG.W / 2, 70 + 5 * (h + 8) + 6, 76, 1, () => setMode('title'), COLORS.ice, 1);
 }
 const drawRunnerLevels = () => drawLevelPage('RUNNER', state.runnerUnlocked, startRunnerLevel);
 const drawHomeLevels = () => drawLevelPage('HOME', state.homeUnlocked, startHomeLevel);
