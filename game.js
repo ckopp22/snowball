@@ -950,7 +950,7 @@ function startLastBattle() {
   for (let k = 0; k < CONFIG.castleGuards; k++) addGuard(CONFIG.W - 60 + k * 24, CONFIG.lastTop + 30, k);
 }
 
-// A Castle guard: stands in front of the Castle and slides along the line between the boy and the Castle to block shots; turns on a boy who gets close
+// A Castle guard: stands in front of the Castle and slides along the line between the boy and the Castle to block shots; never leaves the Castle
 function addGuard(x, y, k) {
   spawnBully('runner', x, y);
   const b = state.bullies[state.bullies.length - 1];
@@ -1581,8 +1581,7 @@ function updateBullies(dt) {
     if (b.flash > 0) b.flash -= dt;
     if (b.state === 'walking' && b.guard) {                // Castle guard: hold the line between the boy and the Castle
       const tp = runTarget(b.x, b.y);
-      if (Math.hypot(tp.px - b.x, tp.py - b.y) < 90) { b.guard = false; b.phase = 4; }
-      else {
+      {
         const cx = CONFIG.W, cy = CONFIG.lastTop - 20, below = tp.py > b.gy + 8;
         let tx = below ? tp.px + (cx - tp.px) * (tp.py - b.gy) / (tp.py - cy) : cx, inc = null;
         for (const s of state.snowballs) if (s.vy < 0 && s.y > b.gy && inCastle({ x: s.x + s.vx * (s.y - CONFIG.lastTop) / -s.vy, y: CONFIG.lastTop }) && (!inc || s.y < inc.y)) inc = s;   // a snowball heading for the Castle
