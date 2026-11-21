@@ -1374,7 +1374,7 @@ function collectPower(owner) {
   } else if (pick === 'heal') {
     state.health = CONFIG.fortHealth;
     puff(CONFIG.fortCX, CONFIG.fortCY - 12);
-    state.popup = { text: 'FORT REPAIRED!', t: 1.4 };
+    state.popup = { text: '+ HEALTH', t: 1.4 };
   } else if (pick === 'avalanche') {
     state.avalanche = { y: -CONFIG.avalancheBand };             // starts above the top edge
     sfx('avalanche');
