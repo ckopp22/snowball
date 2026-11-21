@@ -2870,7 +2870,7 @@ function drawPageBoy(p) {
     state.lastSel = Math.min(state.lastSel, state.lastLv + 1);
     const bh = button('LAST', CONFIG.W - 3 - 30, by, 60, 1.3, startLastBattle, COLORS.red, 1, 'BATTLE'), cx = CONFIG.W - 33, t = performance.now() / 1000;
     if (state.lastLv > 0) {                                       // badge: tap to pick how many Yetis guard the Castle (up to one past the highest beaten)
-      const bx = cx + 30, byy = by - Math.round(bh / 2) - 2;
+      const bx = cx, byy = by + Math.ceil(bh / 2) + 3 + Math.ceil(Math.ceil(btnH() * 0.6) / 2);
       button('', bx, byy, 20, 0.6, () => { state.lastSel = state.lastSel > state.lastLv ? 1 : state.lastSel + 1; }, COLORS.gold, 1);
       drawText5(String(state.lastSel), bx, byy - 4, 1, COLORS.night, 'center');
     }
