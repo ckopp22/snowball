@@ -2989,7 +2989,7 @@ function drawPaused() {
   drawTextShadow('PAUSED', CONFIG.W / 2, 80, 3, COLORS.snow, 'center');
   const h = btnH();
   button('RESUME', CONFIG.W / 2, 140, 110, 1, () => setMode('playing'));
-  button('QUIT', CONFIG.W / 2, 140 + h + 10, 110, 1, () => { awardXp(state.score); resetGame(); state.story = null; setMode('title'); });   // quitting still banks the score
+  button('QUIT', CONFIG.W / 2, 140 + h + 10, 110, 1, () => { if (!state.story && !state.last) recordBest(state.wave); awardXp(state.score); resetGame(); state.story = null; setMode('title'); });   // quitting still banks the score
 }
 
 function drawGameOver() {
