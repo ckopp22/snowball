@@ -709,8 +709,8 @@ function updateFlakes(dt) {
 const clampRx = x => Math.max(8, Math.min(CONFIG.W - 8, x)), clampRy = y => Math.max(24, Math.min(view.h - 10, y));
 // Home perks: plaques on the outer wall (two left of the door, two right); hit one with a snowball to buy it
 const HOME_PERKS = [
-  { id: 'health', name: 'HEALTH', x: 120, cost: 1000 },
-  { id: 'avalanche', name: 'AVALANCHE', x: 150, cost: 1000 },
+  { id: 'health', name: 'HEALTH', x: 120, cost: 2000 },
+  { id: 'avalanche', name: 'AVALANCHE', x: 150, cost: 2000 },
   { id: 'gun', name: 'MACHINE GUN', x: 210, cost: 500 },
   { id: 'door', name: 'DOOR', x: 240, cost: 500 },
   { id: 'checkpoint', name: 'CHECKPOINT', x: CONFIG.homeR - 6, dy: 16, side: true, cost: 500 },
