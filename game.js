@@ -3541,7 +3541,7 @@ function btFinish(bt, over) {
     if (bt.coop) { state.bCoopWins++; saveBest(state.bCoopWins, CONFIG.battleCoopKey); } else { state.bWins++; saveBest(state.bWins, CONFIG.battleKey); }
     spawnConfetti(); sfx('fanfare', true);
   } else sfx('over', true);
-  awardXp(me.kills * 20 + (over === 1 ? 100 : 0));
+  awardXp(me.kills * 100 + (over === 1 ? 1000 : 0));
 }
 
 function btUpdate(dt) {
