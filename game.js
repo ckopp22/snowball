@@ -3257,9 +3257,9 @@ function updateMenuDemo(dt) {
 // ---------- Battle: last-player-standing in the woods (12 players, shrinking circle) ----------
 // Solo: you + 11 bots. Co-op: two humans (one team) + 10 bots. The host (or solo) device runs the world; the guest sends its position and throws.
 const BT = {
-  S: 640, hp: 5, speed: 62, botSpeed: 52, spdMul: 1.6, spdTime: 6, gunTime: 5, gunGap: 0.15, gunDmg: 0.4,
-  cd: 0.5, botCd: 1.4, ballSpeed: 220, ballLife: 0.7, hitR: 6, trees: 70, grass: 14, flakes: 28,
-  radii: [330, 230, 150, 85, 10], shrinkEvery: 30, shrinkTime: 12, stormDmg: [0.5, 0.8, 1.2, 1.8, 3], matchTime: 120,
+  S: 1000, hp: 5, speed: 62, botSpeed: 52, spdMul: 1.6, spdTime: 6, gunTime: 5, gunGap: 0.15, gunDmg: 0.4,
+  cd: 0.5, botCd: 1.4, ballSpeed: 220, ballLife: 0.7, hitR: 6, trees: 200, grass: 30, walls: 70, flakes: 14,
+  radii: [520, 360, 230, 130, 10], shrinkEvery: 30, shrinkTime: 12, stormDmg: [0.5, 0.8, 1.2, 1.8, 3], matchTime: 120,
   perks: ['health', 'gun', 'speed'],
 };
 const BT_NAME = { health: 'HEALTH', gun: 'MACHINE GUN', speed: 'SPEED BOOST' };
@@ -3279,9 +3279,13 @@ const btWins = bt => (bt.coop ? state.bCoopWins : state.bWins);
 
 function btNew(seed, coop, me) {
   const R = btRng(seed), S = BT.S;
-  const bt = { seed, coop, me, t: 0, over: 0, endT: 0, paused: false, acc: 0, trees: [], grass: [], flakes: [], balls: [], circles: [{ x: S / 2, y: S / 2, r: BT.radii[0] }], players: [], popup: null };
+  const bt = { seed, coop, me, t: 0, over: 0, endT: 0, paused: false, acc: 0, trees: [], walls: [], grass: [], flakes: [], balls: [], circles: [{ x: S / 2, y: S / 2, r: BT.radii[0] }], players: [], popup: null };
   for (let i = 0; i < BT.trees; i++) bt.trees.push({ x: 12 + R() * (S - 28), y: 12 + R() * (S - 34) });
   for (let i = 0; i < BT.grass; i++) bt.grass.push({ x: 40 + R() * (S - 80), y: 40 + R() * (S - 80), rx: 22 + R() * 16, ry: 15 + R() * 11 });
+  for (let i = 0; i < BT.walls; i++) {                               // snow walls: cover from snowballs
+    const hor = R() < 0.5, l = 28 + R() * 24;
+    bt.walls.push({ x: 12 + R() * (S - 70), y: 12 + R() * (S - 70), w: hor ? l : 8, h: hor ? 8 : l });
+  }
   for (let i = 0; i < BT.flakes; i++) bt.flakes.push({ x: 20 + R() * (S - 40), y: 20 + R() * (S - 40), on: true });
   let cx = S / 2, cy = S / 2;
   for (let k = 1; k < BT.radii.length; k++) {                       // each circle sits inside the one before it
@@ -3293,8 +3297,8 @@ function btNew(seed, coop, me) {
   for (let i = 0; i < 12; i++) {
     let x = S / 2, y = S / 2;
     for (let n = 0; n < 60; n++) {
-      const a = R() * 6.283, d = Math.sqrt(R()) * 290; x = S / 2 + Math.cos(a) * d; y = S / 2 + Math.sin(a) * d;
-      if (spawns.every(q => Math.hypot(q.x - x, q.y - y) > 85) && bt.trees.every(T => Math.hypot(T.x + 4 - x, T.y + 11 - y) > 14)) break;
+      const a = R() * 6.283, d = Math.sqrt(R()) * 460; x = S / 2 + Math.cos(a) * d; y = S / 2 + Math.sin(a) * d;
+      if (spawns.every(q => Math.hypot(q.x - x, q.y - y) > 85) && bt.trees.every(T => Math.hypot(T.x + 4 - x, T.y + 11 - y) > 14) && !bt.walls.some(w => x > w.x - 8 && x < w.x + w.w + 8 && y > w.y - 8 && y < w.y + w.h + 8)) break;
     }
     spawns.push({ x, y });
     bt.players.push({
@@ -3329,7 +3333,7 @@ function btGround() {
   const g = c.getContext('2d'), R = btRng(99);
   g.fillStyle = COLORS.snow; g.fillRect(0, 0, BT.S, BT.S);
   g.fillStyle = COLORS.ice;
-  for (let i = 0; i < 900; i++) g.fillRect(Math.floor(R() * (BT.S - 3)), Math.floor(R() * BT.S), 2 + Math.floor(R() * 2), 1);
+  for (let i = 0; i < 2200; i++) g.fillRect(Math.floor(R() * (BT.S - 3)), Math.floor(R() * BT.S), 2 + Math.floor(R() * 2), 1);
   g.fillStyle = COLORS.shadow;
   g.fillRect(0, 0, BT.S, 3); g.fillRect(0, BT.S - 3, BT.S, 3); g.fillRect(0, 0, 3, BT.S); g.fillRect(BT.S - 3, 0, 3, BT.S);
   return (btGroundImg = c);
@@ -3372,6 +3376,10 @@ function btStep(bt, p, dx, dy, dt, sp) {
   for (const T of bt.trees) {
     const ox = T.x + 4, oy = T.y + 11, ex = x - ox, ey = y - oy, d = Math.hypot(ex, ey);
     if (d < 7 && d > 0) { x = ox + ex / d * 7; y = oy + ey / d * 7; }
+  }
+  for (const w of bt.walls) {
+    const qx = Math.max(w.x, Math.min(w.x + w.w, x)), qy = Math.max(w.y, Math.min(w.y + w.h, y)), ex = x - qx, ey = y - qy, d = Math.hypot(ex, ey);
+    if (d < 5) { if (d > 0) { x = qx + ex / d * 5; y = qy + ey / d * 5; } else y = w.y - 5; }
   }
   if (Math.abs(x - p.x) + Math.abs(y - p.y) > 0.01) p.walkT = 0.15;
   p.vx = (x - p.x) / dt; p.vy = (y - p.y) / dt;
@@ -3428,6 +3436,7 @@ function btBalls(bt, dt, hits) {
     let dead = b.life <= 0 || b.x < 0 || b.y < 0 || b.x > BT.S || b.y > BT.S;
     if (!dead && hits) {
       for (const T of bt.trees) if (Math.hypot(b.x - T.x - 4, b.y - T.y - 9) < 6) { dead = true; puff(b.x, b.y); break; }
+      if (!dead) for (const w of bt.walls) if (b.x > w.x - 1 && b.x < w.x + w.w + 1 && b.y > w.y - 1 && b.y < w.y + w.h + 1) { dead = true; puff(b.x, b.y); break; }
       if (!dead) for (const q of bt.players) {
         if (!q.alive || q.team === bt.players[b.o].team) continue;
         if (btSegDist(px, py, b.x, b.y, q.x, q.y) < BT.hitR) { btHurt(bt, q, b.d, b.o); dead = true; break; }
@@ -3440,7 +3449,7 @@ function btBlocked(bt, ax, ay, bx, by) {
   const n = Math.ceil(Math.hypot(bx - ax, by - ay) / 10);
   for (let i = 1; i < n; i++) {
     const x = ax + (bx - ax) * i / n, y = ay + (by - ay) * i / n;
-    if (bt.trees.some(T => Math.abs(T.x + 4 - x) < 6 && Math.abs(T.y + 9 - y) < 6)) return true;
+    if (bt.trees.some(T => Math.abs(T.x + 4 - x) < 6 && Math.abs(T.y + 9 - y) < 6) || bt.walls.some(w => x > w.x && x < w.x + w.w && y > w.y && y < w.y + w.h)) return true;
   }
   return false;
 }
@@ -3654,6 +3663,14 @@ function btDrawKid(bt, p, alpha) {
   ctx.globalAlpha = 1;
 }
 
+function btDrawWall(w) {
+  const x = Math.round(w.x), y = Math.round(w.y);
+  rect(COLORS.night, x - 1, y - 1, w.w + 2, w.h + 4);
+  rect(COLORS.shadow, x, y, w.w, w.h + 3);
+  rect(COLORS.ice, x, y, w.w, w.h);
+  rect(COLORS.snow, x, y, w.w, 2);
+}
+
 function btCam(bt) {
   const me = bt.players[bt.me];
   if (me.alive) return me;
@@ -3674,6 +3691,7 @@ function drawBattle() {
   for (const f of bt.flakes) if (f.on && f.x > L && f.x < Rt && f.y > T && f.y < B) drawPowerAt(f.x, f.y, bt.t + f.x * 0.05);
   const ents = [];
   for (const t of bt.trees) if (t.x > L && t.x < Rt && t.y > T && t.y < B) ents.push([t.y + 15, null, t]);
+  for (const w of bt.walls) if (w.x + w.w > L && w.x < Rt && w.y + w.h > T && w.y < B) ents.push([w.y + w.h, null, w]);
   const late = [];
   for (const p of bt.players) {
     if (!p.alive || p.x < L || p.x > Rt || p.y < T || p.y > B) continue;
@@ -3681,7 +3699,7 @@ function drawBattle() {
     ents.push([p.y + 6, p, p]);
   }
   ents.sort((a, b) => a[0] - b[0]);
-  for (const [, k, o] of ents) { if (k) btDrawKid(bt, o, 1); else ctx.drawImage(treeImg, o.x, o.y); }
+  for (const [, k, o] of ents) { if (k) btDrawKid(bt, o, 1); else if (o.w) btDrawWall(o); else ctx.drawImage(treeImg, o.x, o.y); }
   for (const b of bt.balls) drawSnowball(b);
   ctx.drawImage(bt.grassImg, 0, 0);                          // tall grass hides anyone standing in it
   for (const p of late) {
