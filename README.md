@@ -10,6 +10,10 @@ An endless, pixel-art snowball-defense game. You are a kid behind a snow fort; w
 - A bully that reaches the fort removes health (Big Kids remove 2). At 0 health the game ends.
 - Score: 10 / 20 / 30 / 25 points for Regular / Runner / Big Kid / Sled Kid, plus 50 per completed wave. Your best score is saved on the device.
 
+## Battle
+
+Title screen, **BATTLE**, then **SOLO** or **CO-OP** (same pairing as Co-op below). 12 players are dropped into the woods; last one standing wins. Left thumb moves, right thumb drags to aim and throws in any direction. A 2:00 timer runs and every 30 s the safe circle shrinks (the storm outside it hurts). Hide in tall grass, grab snowflakes for Health, Machine Gun and Speed Boost perks (tap them on the right to use). Solo is you plus 11 bots; co-op is two humans on one team plus 10 bots. Wins are saved per device and shown on the SOLO / CO-OP buttons.
+
 ## Run locally
 
 The service worker needs `http://`, not `file://`. From this folder:

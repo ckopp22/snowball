@@ -150,6 +150,8 @@ const CONFIG = {
   levelBarSeconds: 1.4,   // how long a full bar takes to fill on the menu
   confettiCount: 130,
   mutedKey: 'snowball_muted',
+  battleKey: 'snowball_battlewins',            // Battle wins (solo)
+  battleCoopKey: 'snowball_battlecoopwins',    // Battle wins (co-op)
   sfxVolume: 0.3,         // master volume (0-1); sounds are short and quiet on purpose
 };
 
@@ -570,6 +572,9 @@ const state = {
   hurt: 0,             // timer: kid flashes red and bounces when the fort / player is hit
   px: 90, py: 200,     // runner position (centre of the kid)
   stick: null,         // { id, ax, ay, dx, dy } floating joystick
+  battle: null,        // Battle match in progress (see btNew)
+  wantBattle: false,   // the co-op menu was opened from Battle
+  bWins: loadBest(CONFIG.battleKey), bCoopWins: loadBest(CONFIG.battleCoopKey),
 };
 
 for (let i = 0; i < CONFIG.flakes; i++) {
@@ -598,7 +603,7 @@ function updateAim(p) {
   state.aimValid = pull >= CONFIG.minPull;
   if (!state.aimValid) return;
   let a = Math.atan2(-dy, dx) / DEG;         // -180..180, positive = up
-  if (state.runner || (state.home && (state.door.open || state.py < homeWallY() + 5))) { state.aimAngle = a; return; }   // Runner, or Home with the door open / outside: full 360          // Runner: full 360
+  if (state.runner || state.mode === 'battle' || (state.home && (state.door.open || state.py < homeWallY() + 5))) { state.aimAngle = a; return; }   // Runner, or Home with the door open / outside: full 360          // Runner: full 360
   const lo = state.home ? 0 : CONFIG.minAngle, hi = state.home ? 180 : CONFIG.maxAngle;   // Home: straight left or right is allowed
   if (a < 0) a = a > -90 ? lo : hi;                           // downward -> nearest edge
   state.aimAngle = Math.min(hi, Math.max(lo, a));
@@ -632,7 +637,7 @@ function throwSnowball(slot, auto, angle) {          // auto = machine-gun shot:
 
 // Guest only: tell the host where we are aiming (throttled) so it can draw our dotted line and use it for the machine gun
 function sendAim(force) {
-  if (net.role !== 'guest') return;
+  if (net.role !== 'guest' || state.mode === 'battle') return;
   const t = performance.now();
   if (!force && t - (net.lastAimSent || 0) < 60) return;
   net.lastAimSent = t;
@@ -648,8 +653,9 @@ window.addEventListener('pointerdown', e => {
   initAudio();                       // browsers only allow audio after a user gesture
   const b = hitButton(toCanvas(e));
   if (b) { b.onTap(); sfx('click'); return; }
-  if (state.mode !== 'playing' || state.ask) return;
-  if ((state.runner || state.home) && toCanvas(e).x < CONFIG.W / 2) {          // left half: floating joystick
+  if ((state.mode !== 'playing' && state.mode !== 'battle') || state.ask) return;
+  if (state.mode === 'battle' && !btCanAct()) return;
+  if ((state.runner || state.home || state.mode === 'battle') && toCanvas(e).x < CONFIG.W / 2) {          // left half: floating joystick
     if (!state.stick) { const p = toCanvas(e); state.stick = { id: e.pointerId, ax: p.x, ay: p.y, dx: 0, dy: 0 }; }
     return;
   }
@@ -683,6 +689,7 @@ window.addEventListener('pointermove', e => {
 
 window.addEventListener('pointerup', e => {
   if (state.stick && e.pointerId === state.stick.id) { state.stick = null; sendAim(true); return; }
+  if (state.mode === 'battle') { if (state.aiming && e.pointerId === state.pointerId) { e.preventDefault(); updateAim(toCanvas(e)); btRelease(); endAim(); } return; }
   if (!state.aiming || e.pointerId !== state.pointerId) return;
   e.preventDefault();
   updateAim(toCanvas(e));
@@ -922,7 +929,7 @@ function resetGame() {
   }
 }
 
-function setMode(m) { endAim(); state.stick = null; if (MENU_MODES.includes(m)) state.runner = state.home = state.last = false; if (state.mode === 'paused' && m === 'playing') state.resumeAt = performance.now(); state.mode = m; }
+function setMode(m) { endAim(); state.stick = null; if (MENU_MODES.includes(m)) { state.runner = state.home = state.last = false; state.battle = null; } if (m === 'title' || m === 'wavesmenu') state.wantBattle = false; if (state.mode === 'paused' && m === 'playing') state.resumeAt = performance.now(); state.mode = m; }
 
 // DEBUG (easy to remove): open index.html?wave=8 to start at wave 8
 const DEBUG_START_WAVE = parseInt(new URLSearchParams(location.search).get('wave'), 10) || 1;
@@ -1343,7 +1350,7 @@ function firstBullyHit(ax, ay, bx, by) {
 
 // ---- Power-ups ----
 const rand = (a, b) => a + Math.random() * (b - a);
-const MENU_MODES = ['title', 'levels', 'wavesmenu', 'wavetype', 'coopmenu', 'coophost', 'coopjoin', 'cooplobby', 'runnerlevels', 'homelevels', 'runpan'];
+const MENU_MODES = ['title', 'levels', 'wavesmenu', 'wavetype', 'coopmenu', 'coophost', 'coopjoin', 'cooplobby', 'runnerlevels', 'homelevels', 'runpan', 'battlemenu'];
 
 // Segment-vs-circle; returns t (0..1 along the snowball's path this frame) or null
 function firstPowerHit(ax, ay, bx, by) {
@@ -1857,7 +1864,8 @@ function gameOver() {
 
 // Auto-pause when the tab is hidden
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden && state.mode === 'playing' && !isCoop()) setMode('paused');   // co-op can't pause
+  if (document.hidden && state.mode === 'playing' && !isCoop()) setMode('paused');
+  if (document.hidden && state.mode === 'battle' && state.battle && !state.battle.coop) state.battle.paused = true;   // co-op can't pause
 });
 
 // ---------- Co-op networking ----------
@@ -1883,7 +1891,10 @@ function resetNet() {
 
 function leaveCoop() { resetNet(); state.entry = ''; resetGame(); setMode('title'); }
 // Co-op lobby: both players wait here after connecting and after each game; the host picks the map
-function enterLobby() { resetGame(); state.entry = ''; setMode('cooplobby'); }
+function enterLobby() {
+  resetGame(); state.entry = ''; setMode('cooplobby');
+  if (state.wantBattle && net.role === 'host') setTimeout(() => { if (state.mode === 'cooplobby' && state.wantBattle && net.role === 'host') startBattle(); }, 700);
+}
 function backToCoopMenu() { resetNet(); state.entry = ''; setMode('coopmenu'); }
 function openCoopMenu() { state.runner = false; net.status = 'idle'; net.error = ''; setMode('coopmenu'); }
 
@@ -1952,6 +1963,7 @@ function joinGame(code) {
 function hostOnData(d) {
   if (!d || typeof d !== 'object') return;
   net.lastRx = performance.now(); net.lost = false;
+  if (state.battle) { btHostOnData(d); return; }
   const r = state.remote;
   if (d.k === 'a' && Number.isFinite(d.a)) {
     r.aimAngle = (state.runner || state.home) ? d.a : Math.min(CONFIG.maxAngle, Math.max(CONFIG.minAngle, d.a));
@@ -2004,6 +2016,7 @@ function buildSnapshot() {
 function guestOnData(d) {
   if (!d || typeof d !== 'object') return;
   net.lastRx = performance.now(); net.lost = false;
+  if (d.k === 'bstart' || d.k === 'B') { btGuestOnData(d); return; }
   if (d.k === 's') applySnapshot(d);
   else if (d.k === 'q' && HOME_PERKS.some(p => p.id === d.id)) state.ask = d.id;   // the host says our snowball hit a plaque
 }
@@ -2098,7 +2111,7 @@ function updateGuest(dt) {
 // Every frame while connected: host sends snapshots, guest sends a heartbeat; either side notices a dead link
 function netTick(dt) {
   net.acc += dt;
-  if (net.role === 'host' && net.acc >= CONFIG.netInterval) { net.acc = 0; netSend(buildSnapshot()); }
+  if (net.role === 'host' && net.acc >= CONFIG.netInterval) { net.acc = 0; netSend(state.battle ? btSnapshot() : buildSnapshot()); }
   else if (net.role === 'guest' && net.acc >= 1) { net.acc = 0; netSend({ k: 'h' }); }
   if (!net.lost && performance.now() - net.lastRx > CONFIG.netTimeout * 1000) net.lost = true;
 }
@@ -2245,6 +2258,7 @@ function perkIcon(id, cx, cy, k, rot) {
   }
   else if (id === 'avalanche') { r(COLORS.snow, 0, -2, 1, 1); r(COLORS.snow, -1, -1, 3, 1); r(COLORS.ice, -2, 0, 5, 3); }
   else if (id === 'gun') { r(COLORS.ice, -2, -1, 5, 2); r(COLORS.ice, 2, -1, 2, 1); r(COLORS.ice, -2, 1, 2, 2); }
+  else if (id === 'speed') { r(COLORS.gold, 0, -2, 2, 1); r(COLORS.gold, -1, -1, 2, 1); r(COLORS.gold, -1, 0, 3, 1); r(COLORS.gold, 0, 1, 2, 1); r(COLORS.gold, -1, 2, 1, 1); }
   else if (id === 'checkpoint') { if (rot) { r(COLORS.red, -2, -2, 5, 1); r(COLORS.red, 0, -1, 3, 4); } else { r(COLORS.red, -2, -2, 1, 5); r(COLORS.red, -1, -2, 4, 3); } }
   else { r('#c58b4a', -2, -2, 5, 5); r('#6b4423', -1, -1, 3, 4); r(COLORS.gold, 1, 1, 1, 1); }
 }
@@ -2280,7 +2294,7 @@ function drawWinAlerts() {
 
 function drawStick() {
   const st = state.stick;
-  if (!st || !(state.runner || state.home) || state.mode !== 'playing') return;
+  if (!st || !(state.runner || state.home || state.mode === 'battle') || (state.mode !== 'playing' && state.mode !== 'battle')) return;
   const R = CONFIG.stickRadius;
   ctx.globalAlpha = 0.35;
   for (let i = 0; i < 24; i++) { const a = i / 24 * Math.PI * 2; rect(COLORS.night, st.ax + Math.cos(a) * R - 1, st.ay + Math.sin(a) * R - 1, 2, 2); }
@@ -2292,7 +2306,7 @@ function drawStick() {
 
 // step: 0 = standing, 1 / 2 = the two walking poses (legs alternate)
 function drawKidAt(x, y, slot, b, step) {
-  const c = KID_COLORS[slot];
+  const c = typeof slot === 'object' ? slot : KID_COLORS[slot];
   rect(COLORS.snow, x + 3, y - b, 2, 1);          // pom
   rect(c.hat, x + 1, y + 1 - b, 6, 2);            // hat
   rect(COLORS.snow, x, y + 3 - b, 8, 1);          // hat cuff
@@ -2654,7 +2668,10 @@ function drawPower() {
   const pw = state.power;
   if (!pw) return;
   if (CONFIG.powerLife - pw.age < 2 && Math.floor(pw.age * 8) % 2) return;
-  const x = Math.round(pw.x) - 3, y = Math.round(pw.y) - 3;
+  drawPowerAt(pw.x, pw.y, pw.age);
+}
+function drawPowerAt(px, py, age) {
+  const x = Math.round(px) - 3, y = Math.round(py) - 3;
   const flake = (ox, oy, arm, core) => {
     rect(arm, x + ox + 3, y + oy, 1, 7); rect(arm, x + ox, y + oy + 3, 7, 1);
     for (const [dx, dy] of [[1, 1], [5, 1], [1, 5], [5, 5]]) rect(arm, x + ox + dx, y + oy + dy, 1, 1);
@@ -2665,7 +2682,7 @@ function drawPower() {
   ctx.globalAlpha = 1;
   flake(0, 0, COLORS.shadow, COLORS.snow);
   rect(COLORS.coatBlue, x + 3, y + 3, 1, 1);
-  const tw = Math.floor(pw.age * 6) % 4;                         // sparkles take turns
+  const tw = Math.floor(age * 6) % 4;                         // sparkles take turns
   const sp = [[-3, -2], [9, 1], [-2, 8], [8, 9]][tw];
   rect(COLORS.gold, x + sp[0], y + sp[1] + 1, 3, 1);
   rect(COLORS.gold, x + sp[0] + 1, y + sp[1], 1, 3);
@@ -2775,6 +2792,7 @@ function drawTitle() {
   drawText5('SNOWBALL', CONFIG.W / 2, 50, 3, COLORS.coatBlue, 'center', COLORS.night);
   const sh = button('STORY', CONFIG.W / 2, 140, 100, 1, () => setMode('levels'), COLORS.hatGreen, 1);
   button('WAVES', CONFIG.W / 2, 140 + sh + 8, 100, 1, () => setMode('wavesmenu'));
+  button('BATTLE', CONFIG.W / 2, 140 + 2 * (sh + 8), 100, 1, () => setMode('battlemenu'), COLORS.red, 1);
   if (installEvent) button('INSTALL', 3 + 43, 3 + Math.ceil(btnH() / 2), 86, 1, promptInstall, COLORS.ice, 1);   // top left
   drawMuteButton(CONFIG.W - 3 - btnH(), 3, true);
 }
@@ -2927,10 +2945,10 @@ function drawLevelWin() {
 function drawCoopMenu() {
   const cx = CONFIG.W / 2, h = Math.ceil(btnH() * 1.3);
   drawText5('CO-OP', cx, 36, 3, COLORS.coatBlue, 'center', COLORS.night);
-  drawText5('TWO PLAYERS - ONE FORT', cx, 68, 1, COLORS.night, 'center', COLORS.snow);
+  drawText5(state.wantBattle ? 'TWO PLAYERS - TEN BOTS' : 'TWO PLAYERS - ONE FORT', cx, 68, 1, COLORS.night, 'center', COLORS.snow);
   button('CREATE GAME', cx, 120, 160, 1.3, () => { setMode('coophost'); hostGame(); });
   button('JOIN GAME', cx, 120 + h + 10, 140, 1.3, () => { state.entry = ''; net.status = 'idle'; net.error = ''; setMode('coopjoin'); });
-  button('BACK', cx, 120 + 2 * (h + 10), 100, 1, () => setMode('wavesmenu'), COLORS.ice);
+  button('BACK', cx, 120 + 2 * (h + 10), 100, 1, () => setMode(state.wantBattle ? 'battlemenu' : 'wavesmenu'), COLORS.ice);
 }
 
 function drawCoopLobby() {
@@ -2942,6 +2960,7 @@ function drawCoopLobby() {
     return;
   }
   const host = net.role === 'host';
+  if (state.wantBattle) { drawText5('BATTLE', cx, 70, 2, COLORS.red, 'center', COLORS.snow); drawText5('STARTING...', cx, 96, 1, COLORS.night, 'center', COLORS.snow); return; }
   if (host) drawText5('CHOOSE A MAP', cx, 66, 1, COLORS.night, 'center', COLORS.snow);
   else drawText5('HOST IS CHOOSING A MAP' + '.'.repeat(1 + Math.floor(performance.now() / 400) % 3), cx, 66, 1, COLORS.coatBlue, 'center', COLORS.snow);
   if (!host) ctx.globalAlpha = 0.55;                                   // guest sees the options but can't pick
@@ -3133,6 +3152,7 @@ function drawFrame() {
   if (state.mode === 'splash') { drawSplash(); return; }
   if (logoEl && logoEl.parentNode) logoEl.remove();
   if (state.mode === 'runpan') { drawRunPan(); return; }
+  if (state.mode === 'battle') { drawBattle(); return; }
   if (state.mode === 'castlewin' && state.cwT >= END_T.black) { drawEnding(); return; }
   const cut = state.mode === 'cutscene';
   const shaking = cut && state.cut.t > CUT.shake && state.cut.t < CUT.shake + 1.2;
@@ -3174,6 +3194,7 @@ function drawFrame() {
   else if (state.mode === 'levels') { withInset(drawLevels); drawPageBoy(0); }
   else if (state.mode === 'wavesmenu') withInset(drawWavesMenu);
   else if (state.mode === 'wavetype') withInset(drawWaveType);
+  else if (state.mode === 'battlemenu') withInset(drawBattleMenu);
   else if (state.mode === 'coopmenu') withInset(drawCoopMenu);
   else if (state.mode === 'coophost') withInset(drawCoopHost);
   else if (state.mode === 'coopjoin') withInset(drawCoopJoin);
@@ -3233,12 +3254,557 @@ function updateMenuDemo(dt) {
 }
 
 // ---------- Loop ----------
+// ---------- Battle: last-player-standing in the woods (12 players, shrinking circle) ----------
+// Solo: you + 11 bots. Co-op: two humans (one team) + 10 bots. The host (or solo) device runs the world; the guest sends its position and throws.
+const BT = {
+  S: 640, hp: 5, speed: 62, botSpeed: 52, spdMul: 1.6, spdTime: 6, gunTime: 5, gunGap: 0.15, gunDmg: 0.4,
+  cd: 0.5, botCd: 1.4, ballSpeed: 220, ballLife: 0.7, hitR: 6, trees: 70, grass: 14, flakes: 28,
+  radii: [330, 230, 150, 85, 10], shrinkEvery: 30, shrinkTime: 12, stormDmg: [0.5, 0.8, 1.2, 1.8, 3], matchTime: 120,
+  perks: ['health', 'gun', 'speed'],
+};
+const BT_NAME = { health: 'HEALTH', gun: 'MACHINE GUN', speed: 'SPEED BOOST' };
+const BT_COLS = [
+  { hat: COLORS.red, scarf: COLORS.snow, coat: COLORS.red }, { hat: COLORS.hatGreen, scarf: COLORS.gold, coat: '#2f8a3e' },
+  { hat: COLORS.pink, scarf: COLORS.coatBlue, coat: '#d65a97' }, { hat: COLORS.orange, scarf: COLORS.night, coat: '#d97b1a' },
+  { hat: '#7a4fd1', scarf: COLORS.ice, coat: '#6a3fc0' }, { hat: COLORS.night, scarf: COLORS.red, coat: '#2c3e66' },
+  { hat: COLORS.blonde, scarf: COLORS.red, coat: '#b89a3a' }, { hat: '#2bb5a5', scarf: COLORS.snow, coat: '#1f8f82' },
+  { hat: COLORS.brown, scarf: COLORS.orange, coat: '#6b4423' }, { hat: '#888', scarf: COLORS.gold, coat: '#666' },
+];
+function btRng(seed) {
+  let a = seed >>> 0;
+  return () => { a = (a + 0x6D2B79F5) >>> 0; let t = Math.imul(a ^ (a >>> 15), a | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
+const btCanAct = () => { const bt = state.battle; return !!bt && !bt.over && !bt.paused && bt.players[bt.me].alive; };
+const btWins = bt => (bt.coop ? state.bCoopWins : state.bWins);
+
+function btNew(seed, coop, me) {
+  const R = btRng(seed), S = BT.S;
+  const bt = { seed, coop, me, t: 0, over: 0, endT: 0, paused: false, acc: 0, trees: [], grass: [], flakes: [], balls: [], circles: [{ x: S / 2, y: S / 2, r: BT.radii[0] }], players: [], popup: null };
+  for (let i = 0; i < BT.trees; i++) bt.trees.push({ x: 12 + R() * (S - 28), y: 12 + R() * (S - 34) });
+  for (let i = 0; i < BT.grass; i++) bt.grass.push({ x: 40 + R() * (S - 80), y: 40 + R() * (S - 80), rx: 22 + R() * 16, ry: 15 + R() * 11 });
+  for (let i = 0; i < BT.flakes; i++) bt.flakes.push({ x: 20 + R() * (S - 40), y: 20 + R() * (S - 40), on: true });
+  let cx = S / 2, cy = S / 2;
+  for (let k = 1; k < BT.radii.length; k++) {                       // each circle sits inside the one before it
+    const a = R() * 6.283, d = Math.sqrt(R()) * (BT.radii[k - 1] - BT.radii[k]) * 0.85;
+    cx += Math.cos(a) * d; cy += Math.sin(a) * d;
+    bt.circles.push({ x: cx, y: cy, r: BT.radii[k] });
+  }
+  const humans = coop ? 2 : 1, spawns = [];
+  for (let i = 0; i < 12; i++) {
+    let x = S / 2, y = S / 2;
+    for (let n = 0; n < 60; n++) {
+      const a = R() * 6.283, d = Math.sqrt(R()) * 290; x = S / 2 + Math.cos(a) * d; y = S / 2 + Math.sin(a) * d;
+      if (spawns.every(q => Math.hypot(q.x - x, q.y - y) > 85) && bt.trees.every(T => Math.hypot(T.x + 4 - x, T.y + 11 - y) > 14)) break;
+    }
+    spawns.push({ x, y });
+    bt.players.push({
+      i, human: i < humans, team: i < humans ? 0 : 10 + i, x, y, tx: x, ty: y, vx: 0, vy: 0, hp: BT.hp, alive: true, kills: 0, ang: 1.57,
+      cd: 0, gunT: 0, spdT: 0, gunCd: 0, reveal: 0, hurt: 0, walkT: 0, swing: 0, place: 0, perks: { health: 0, gun: 0, speed: 0 },
+      col: i < humans ? KID_COLORS[i] : BT_COLS[i % BT_COLS.length],
+      ai: { tx: x, ty: y, wait: 0, think: Math.random() * 0.3, tgt: -1, strafe: 1, sw: 1 },
+    });
+    if (i >= humans) bt.players[i].cd = 1.5 + Math.random() * 1.5;
+  }
+  bt.grassImg = btGrassImg(bt);
+  return bt;
+}
+
+function btSetup(seed, coop, me) {
+  state.battle = btNew(seed, coop, me);
+  state.mode = 'battle';
+  state.particles = []; state.confetti = []; state.snowballs = []; state.stick = null;
+  state.runner = state.home = state.last = false; state.story = null;
+  endAim();
+}
+function startBattle() {
+  const coop = isCoop(), seed = (Math.random() * 4e9) >>> 0;
+  btSetup(seed, coop, 0);
+  if (coop) netSend({ k: 'bstart', seed });
+}
+
+let btGroundImg = null;
+function btGround() {
+  if (btGroundImg) return btGroundImg;
+  const c = document.createElement('canvas'); c.width = c.height = BT.S;
+  const g = c.getContext('2d'), R = btRng(99);
+  g.fillStyle = COLORS.snow; g.fillRect(0, 0, BT.S, BT.S);
+  g.fillStyle = COLORS.ice;
+  for (let i = 0; i < 900; i++) g.fillRect(Math.floor(R() * (BT.S - 3)), Math.floor(R() * BT.S), 2 + Math.floor(R() * 2), 1);
+  g.fillStyle = COLORS.shadow;
+  g.fillRect(0, 0, BT.S, 3); g.fillRect(0, BT.S - 3, BT.S, 3); g.fillRect(0, 0, 3, BT.S); g.fillRect(BT.S - 3, 0, 3, BT.S);
+  return (btGroundImg = c);
+}
+function btGrassImg(bt) {
+  const c = document.createElement('canvas'); c.width = c.height = BT.S;
+  const g = c.getContext('2d'), R = btRng(bt.seed + 7);
+  for (const P of bt.grass) {
+    g.fillStyle = 'rgba(46,125,60,0.35)';
+    for (let y = -P.ry; y <= P.ry; y++) { const w = P.rx * Math.sqrt(1 - (y / P.ry) ** 2); g.fillRect(Math.round(P.x - w), Math.round(P.y + y), Math.round(2 * w), 1); }
+    for (let y = -P.ry; y <= P.ry; y += 2) for (let x = -P.rx; x <= P.rx; x += 3) {
+      const nx = x / P.rx, ny = y / P.ry;
+      if (nx * nx + ny * ny > 1 || R() < 0.12) continue;
+      const bx = Math.round(P.x + x + R() * 2), by = Math.round(P.y + y + R() * 2);
+      g.fillStyle = '#2d7a3a'; g.fillRect(bx - 1, by - 3, 1, 4); g.fillRect(bx + 1, by - 2, 1, 3);
+      g.fillStyle = COLORS.hatGreen; g.fillRect(bx, by - 5, 1, 6);
+      g.fillStyle = '#7fd48a'; g.fillRect(bx, by - 5, 1, 1);
+    }
+  }
+  return c;
+}
+const btInGrass = (bt, p) => bt.grass.some(P => ((p.x - P.x) / P.rx) ** 2 + ((p.y + 4 - P.y) / P.ry) ** 2 < 0.8);
+
+// The safe circle at time t: holds, then every 30 s shrinks to the next one over 12 s
+function btZone(bt, t) {
+  const C = bt.circles, k = Math.min(4, Math.floor(t / BT.shrinkEvery));
+  if (k < 1) return C[0];
+  const f = Math.min(1, (t - BT.shrinkEvery * k) / BT.shrinkTime), a = C[k - 1], b = C[k];
+  if (t > BT.matchTime + BT.shrinkTime) return { x: b.x, y: b.y, r: Math.max(0, b.r * (1 - (t - BT.matchTime - BT.shrinkTime) / 18)) };   // overtime: the last circle vanishes
+  return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f, r: a.r + (b.r - a.r) * f };
+}
+function btNext(bt, t) {
+  const k = Math.floor(t / BT.shrinkEvery), sh = k >= 1 && k <= 4 && t - BT.shrinkEvery * k < BT.shrinkTime;
+  return bt.circles[Math.min(4, sh ? k : k + 1)];
+}
+const btShrinking = (bt, t) => t >= BT.shrinkEvery && t < BT.matchTime + BT.shrinkTime && t % BT.shrinkEvery < BT.shrinkTime;
+
+function btStep(bt, p, dx, dy, dt, sp) {
+  let x = Math.max(6, Math.min(BT.S - 6, p.x + dx * sp * dt)), y = Math.max(8, Math.min(BT.S - 6, p.y + dy * sp * dt));
+  for (const T of bt.trees) {
+    const ox = T.x + 4, oy = T.y + 11, ex = x - ox, ey = y - oy, d = Math.hypot(ex, ey);
+    if (d < 7 && d > 0) { x = ox + ex / d * 7; y = oy + ey / d * 7; }
+  }
+  if (Math.abs(x - p.x) + Math.abs(y - p.y) > 0.01) p.walkT = 0.15;
+  p.vx = (x - p.x) / dt; p.vy = (y - p.y) / dt;
+  p.x = x; p.y = y;
+}
+function btTick(p, dt) {
+  for (const k of ['cd', 'gunT', 'spdT', 'gunCd', 'reveal', 'hurt', 'walkT', 'swing']) if (p[k] > 0) p[k] = Math.max(0, p[k] - dt);
+}
+const btNearMe = (bt, p) => { const m = bt.players[bt.me]; return Math.hypot(m.x - p.x, m.y - p.y) < 170; };
+
+function btFire(bt, p, ang, auto) {
+  const c = Math.cos(ang), s = Math.sin(ang);
+  bt.balls.push({ x: p.x + c * 6, y: p.y - 1 + s * 6, vx: c * BT.ballSpeed, vy: s * BT.ballSpeed, o: p.i, life: BT.ballLife, d: auto ? BT.gunDmg : 1 });
+  p.ang = ang; p.swing = CONFIG.armSwingTime; p.reveal = 1.2;
+  if (!auto) p.cd = p.human ? BT.cd : BT.botCd * (0.8 + Math.random() * 0.5);
+  if (btNearMe(bt, p)) sfx('throw', true);
+}
+function btUse(bt, p, id) {
+  if (!p.alive || !(p.perks[id] > 0)) return;
+  if (id === 'health') { if (p.hp >= BT.hp) return; p.hp = Math.min(BT.hp, p.hp + 2); }
+  else if (id === 'gun') p.gunT = BT.gunTime;
+  else p.spdT = BT.spdTime;
+  p.perks[id]--;
+  if (p.i === bt.me) sfx('power', true);
+}
+function btUseMine(id) {
+  const bt = state.battle;
+  if (!btCanAct()) return;
+  if (net.role === 'guest') netSend({ k: 'bu', id }); else btUse(bt, bt.players[bt.me], id);
+}
+
+function btKill(bt, q, owner) {
+  q.place = bt.players.filter(p => p.alive).length;
+  q.alive = false; q.hp = 0;
+  if (owner >= 0 && owner !== q.i) bt.players[owner].kills++;
+  for (let i = 0; i < 3; i++) puff(q.x, q.y);
+  if (q.i === bt.me) sfx('over', true); else if (btNearMe(bt, q)) sfx('hit', true);
+}
+function btHurt(bt, q, d, owner) {
+  q.hp -= d; q.hurt = 0.3; q.reveal = Math.max(q.reveal, 0.8);
+  puff(q.x, q.y);
+  if (q.i === bt.me) sfx('hurt', true); else if (btNearMe(bt, q)) sfx('hit', true);
+  if (q.hp <= 0.001) btKill(bt, q, owner);
+}
+function btSegDist(ax, ay, bx, by, px, py) {
+  const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+  const t = l2 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / l2)) : 0;
+  return Math.hypot(ax + dx * t - px, ay + dy * t - py);
+}
+function btBalls(bt, dt, hits) {
+  for (let i = bt.balls.length - 1; i >= 0; i--) {
+    const b = bt.balls[i], px = b.x, py = b.y;
+    b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt;
+    let dead = b.life <= 0 || b.x < 0 || b.y < 0 || b.x > BT.S || b.y > BT.S;
+    if (!dead && hits) {
+      for (const T of bt.trees) if (Math.hypot(b.x - T.x - 4, b.y - T.y - 9) < 6) { dead = true; puff(b.x, b.y); break; }
+      if (!dead) for (const q of bt.players) {
+        if (!q.alive || q.team === bt.players[b.o].team) continue;
+        if (btSegDist(px, py, b.x, b.y, q.x, q.y) < BT.hitR) { btHurt(bt, q, b.d, b.o); dead = true; break; }
+      }
+    }
+    if (dead) bt.balls.splice(i, 1);
+  }
+}
+function btBlocked(bt, ax, ay, bx, by) {
+  const n = Math.ceil(Math.hypot(bx - ax, by - ay) / 10);
+  for (let i = 1; i < n; i++) {
+    const x = ax + (bx - ax) * i / n, y = ay + (by - ay) * i / n;
+    if (bt.trees.some(T => Math.abs(T.x + 4 - x) < 6 && Math.abs(T.y + 9 - y) < 6)) return true;
+  }
+  return false;
+}
+function btPickup(bt, p) {
+  for (const f of bt.flakes) {
+    if (!f.on || (f.x - p.x) ** 2 + (f.y - p.y) ** 2 > 81) continue;
+    f.on = false;
+    const id = BT.perks[Math.floor(Math.random() * 3)];
+    p.perks[id]++;
+    if (p.i === bt.me) { bt.popup = { text: BT_NAME[id], t: 1.4 }; sfx('power', true); }
+  }
+}
+
+function btTarget(bt, p) {
+  let best = -1, bd = 140;
+  for (const q of bt.players) {
+    if (!q.alive || q.team === p.team) continue;
+    const d = Math.hypot(q.x - p.x, q.y - p.y);
+    if (d < bd && (d < 28 || q.reveal > 0 || !btInGrass(bt, q))) { bd = d; best = q.i; }
+  }
+  return best;
+}
+function btBot(bt, p, dt, z) {
+  const A = p.ai, P = bt.players;
+  if (p.hp <= 2 && p.perks.health > 0) btUse(bt, p, 'health');
+  A.think -= dt; A.sw -= dt;
+  if (A.think <= 0) { A.think = 0.25; A.tgt = btTarget(bt, p); }
+  if (A.sw <= 0) { A.sw = 1 + Math.random() * 1.5; A.strafe = -A.strafe; }
+  const tg = A.tgt >= 0 && P[A.tgt].alive ? P[A.tgt] : null;
+  const ph = bt.t % BT.shrinkEvery, dest = (bt.t < BT.matchTime && ph > 20) || btShrinking(bt, bt.t) ? btNext(bt, bt.t) : z;
+  const outside = Math.hypot(p.x - z.x, p.y - z.y) > z.r - 6;
+  let mx = 0, my = 0;
+  if (outside || Math.hypot(p.x - dest.x, p.y - dest.y) > dest.r - 14) {
+    mx = dest.x - p.x; my = dest.y - p.y;
+    if (outside && p.perks.speed > 0 && p.spdT <= 0) btUse(bt, p, 'speed');
+  } else if (tg) {
+    const dx = tg.x - p.x, dy = tg.y - p.y, d = Math.hypot(dx, dy) || 1;
+    if (d > 95) { mx = dx; my = dy; } else if (d < 45) { mx = -dx; my = -dy; } else { mx = -dy * A.strafe; my = dx * A.strafe; }
+  } else {
+    let f = null, fd = 140;
+    for (const q of bt.flakes) { const d = Math.hypot(q.x - p.x, q.y - p.y); if (q.on && d < fd) { fd = d; f = q; } }
+    if (f) { mx = f.x - p.x; my = f.y - p.y; }
+    else {
+      A.wait -= dt;
+      if (A.wait <= 0 || Math.hypot(A.tx - p.x, A.ty - p.y) < 8) {
+        const a = Math.random() * 6.283, rr = Math.sqrt(Math.random()) * dest.r * 0.8;
+        A.tx = dest.x + Math.cos(a) * rr; A.ty = dest.y + Math.sin(a) * rr; A.wait = 4 + Math.random() * 4;
+      }
+      mx = A.tx - p.x; my = A.ty - p.y;
+    }
+  }
+  const m = Math.hypot(mx, my);
+  if (m > 1) btStep(bt, p, mx / m, my / m, dt, BT.botSpeed * (p.spdT > 0 ? BT.spdMul : 1)); else p.vx = p.vy = 0;
+  if (tg) {
+    const d = Math.hypot(tg.x - p.x, tg.y - p.y);
+    if (p.gunT <= 0 && p.perks.gun > 0 && d < 120) btUse(bt, p, 'gun');
+    if (d < 150 && !btBlocked(bt, p.x, p.y, tg.x, tg.y)) {
+      const lt = d / BT.ballSpeed * 0.8, ang = Math.atan2(tg.y + tg.vy * lt - p.y, tg.x + tg.vx * lt - p.x) + (Math.random() - 0.5) * 0.55;
+      p.ang = ang;
+      if (p.gunT > 0) { if (p.gunCd <= 0) { p.gunCd = BT.gunGap * 1.6; btFire(bt, p, ang, true); } }
+      else if (p.cd <= 0) btFire(bt, p, ang, false);
+    }
+  }
+}
+
+// The local human: joystick moves, the aim drag throws (machine gun fires while aiming)
+function btMeFire(bt, p, auto) {
+  const ang = -state.aimAngle * DEG;
+  if (net.role === 'guest') {
+    netSend({ k: 'bt', a: Math.round(ang * 100) / 100, x: r1(p.x), y: r1(p.y), g: auto ? 1 : 0 });
+    p.ang = ang; p.swing = CONFIG.armSwingTime; if (!auto) p.cd = BT.cd;
+    sfx('throw', true);
+  } else btFire(bt, p, ang, auto);
+}
+function btUpdateMe(bt, p, dt) {
+  const st = state.stick;
+  if (st) { const m = Math.hypot(st.dx, st.dy), k = m > 1 ? 1 / m : 1; btStep(bt, p, st.dx * k, st.dy * k, dt, BT.speed * (p.spdT > 0 ? BT.spdMul : 1)); }
+  else p.vx = p.vy = 0;
+  if (state.aiming && state.aimValid) {
+    p.ang = -state.aimAngle * DEG;
+    if (p.gunT > 0 && p.gunCd <= 0) { p.gunCd = BT.gunGap; btMeFire(bt, p, true); }
+  }
+}
+function btRelease() {
+  const bt = state.battle, p = bt.players[bt.me];
+  if (btCanAct() && state.aimValid && p.cd <= 0 && p.gunT <= 0) btMeFire(bt, p, false);
+}
+
+function btCheckEnd(bt) {
+  const alive = bt.players.filter(p => p.alive);
+  if (!alive.some(p => p.human)) btFinish(bt, 2);
+  else if (new Set(alive.map(p => p.team)).size <= 1) { for (const p of alive) p.place = 1; btFinish(bt, 1); }
+}
+function btFinish(bt, over) {
+  bt.over = over; bt.endT = 0; state.stick = null; endAim();
+  const me = bt.players[bt.me];
+  if (over === 1) {
+    if (bt.coop) { state.bCoopWins++; saveBest(state.bCoopWins, CONFIG.battleCoopKey); } else { state.bWins++; saveBest(state.bWins, CONFIG.battleKey); }
+    spawnConfetti(); sfx('fanfare', true);
+  } else sfx('over', true);
+  awardXp(me.kills * 20 + (over === 1 ? 100 : 0));
+}
+
+function btUpdate(dt) {
+  const bt = state.battle;
+  updateParticles(dt);
+  if (bt.paused) return;
+  if (bt.popup && (bt.popup.t -= dt) <= 0) bt.popup = null;
+  if (bt.over) { bt.endT += dt; btBalls(bt, dt, false); return; }
+  bt.t += dt;
+  const z = btZone(bt, bt.t), dmg = BT.stormDmg[Math.min(4, Math.floor(bt.t / BT.shrinkEvery))];
+  for (const p of bt.players) {
+    if (!p.alive) continue;
+    btTick(p, dt);
+    if (p.i === bt.me) btUpdateMe(bt, p, dt);
+    else if (!p.human) btBot(bt, p, dt, z);
+    btPickup(bt, p);
+    if (p.alive && Math.hypot(p.x - z.x, p.y - z.y) > z.r) { p.hp -= dmg * dt; p.hurt = 0.1; if (p.hp <= 0.001) btKill(bt, p, -1); }
+  }
+  btBalls(bt, dt, true);
+  btCheckEnd(bt);
+}
+function btUpdateGuest(dt) {
+  const bt = state.battle, me = bt.players[bt.me];
+  updateParticles(dt);
+  if (bt.popup && (bt.popup.t -= dt) <= 0) bt.popup = null;
+  if (bt.over) bt.endT += dt; else bt.t += dt;
+  for (const p of bt.players) {
+    btTick(p, dt);
+    if (p.i !== bt.me) { const k = Math.min(1, dt * 15); p.x += (p.tx - p.x) * k; p.y += (p.ty - p.y) * k; }
+  }
+  if (!bt.over && me.alive) {
+    btUpdateMe(bt, me, dt);
+    bt.acc += dt;
+    if (bt.acc >= 0.05) { bt.acc = 0; netSend({ k: 'bm', x: r1(me.x), y: r1(me.y), a: Math.round(me.ang * 100) / 100 }); }
+  }
+  for (const b of bt.balls) { b.x += b.vx * dt; b.y += b.vy * dt; }
+}
+function btFrame(dt) {
+  if (!state.battle) return;
+  if (net.role === 'guest') btUpdateGuest(dt); else btUpdate(dt);
+}
+
+// ---- Co-op networking ----
+function btSnapshot() {
+  const bt = state.battle, ev = net.evq; net.evq = [];
+  return {
+    k: 'B', t: r1(bt.t), o: bt.over,
+    p: bt.players.map(p => {
+      const a = [r1(p.x), r1(p.y), r1(p.hp), p.alive ? 1 : 0, p.kills, Math.round(p.ang * 100) / 100, r1(p.gunT), r1(p.spdT), p.reveal > 0 ? 1 : 0, p.place];
+      if (p.human) a.push(p.perks.health, p.perks.gun, p.perks.speed);
+      return a;
+    }),
+    b: bt.balls.map(b => [r1(b.x), r1(b.y), r1(b.vx), r1(b.vy), b.o]),
+    f: bt.flakes.map(f => (f.on ? 1 : 0)).join(''), ev,
+  };
+}
+function btHostOnData(d) {                       // guest -> host: 'bm' position/aim, 'bt' throw, 'bu' use a perk
+  const bt = state.battle, p = bt.players[1];
+  if (!p || bt.over || !p.alive) return;
+  if (d.k === 'bu' && typeof d.id === 'string' && BT.perks.includes(d.id)) { btUse(bt, p, d.id); return; }
+  if ((d.k === 'bm' || d.k === 'bt') && Number.isFinite(d.x) && Number.isFinite(d.y) && Number.isFinite(d.a)) {
+    const x = Math.max(6, Math.min(BT.S - 6, d.x)), y = Math.max(8, Math.min(BT.S - 6, d.y));
+    if (Math.hypot(x - p.x, y - p.y) > 0.05) p.walkT = 0.15;
+    p.x = x; p.y = y; p.ang = d.a;
+    if (d.k === 'bt') {
+      if (d.g ? p.gunT > 0 && p.gunCd <= 0.05 : p.cd <= 0.15 && p.gunT <= 0) { if (d.g) p.gunCd = BT.gunGap; btFire(bt, p, d.a, !!d.g); }
+    }
+  }
+}
+function btGuestOnData(d) {
+  if (d.k === 'bstart') { if (net.role === 'guest' && Number.isFinite(d.seed)) btSetup(d.seed >>> 0, true, 1); return; }
+  const bt = state.battle;
+  if (d.k !== 'B' || !bt || !Array.isArray(d.p)) return;
+  bt.t = d.t;
+  d.p.forEach((a, i) => {
+    const p = bt.players[i];
+    if (!p) return;
+    if (i === bt.me) { if (a[2] < p.hp - 0.05) { p.hurt = 0.3; sfx('hurt', true); } }
+    else {
+      if (a[2] < p.hp - 0.05) p.hurt = 0.3;
+      if (Math.hypot(a[0] - p.tx, a[1] - p.ty) > 0.05) p.walkT = 0.15;
+      p.tx = a[0]; p.ty = a[1]; p.ang = a[5];
+      if (Math.hypot(a[0] - p.x, a[1] - p.y) > 60) { p.x = a[0]; p.y = a[1]; }
+    }
+    p.hp = a[2]; p.alive = !!a[3]; p.kills = a[4]; p.gunT = a[6]; p.spdT = a[7]; p.reveal = a[8]; p.place = a[9];
+    if (a.length > 10) {
+      if (i === bt.me) for (const [n, id] of BT.perks.entries()) if (a[10 + n] > p.perks[id]) { bt.popup = { text: BT_NAME[id], t: 1.4 }; sfx('power', true); }
+      p.perks = { health: a[10], gun: a[11], speed: a[12] };
+    }
+  });
+  bt.balls = d.b.map(a => ({ x: a[0], y: a[1], vx: a[2], vy: a[3], o: a[4], life: 1, d: 1 }));
+  bt.flakes.forEach((f, i) => { f.on = d.f[i] === '1'; });
+  for (const e of d.ev || []) if (e.e === 'p') puff(e.x, e.y);
+  if (d.o && !bt.over) btFinish(bt, d.o);
+}
+
+// ---- Drawing ----
+function btDrawKid(bt, p, alpha) {
+  const x = Math.round(p.x) - 4, y = Math.round(p.y) - 7 - (p.hurt > 0 ? Math.round(Math.sin((1 - Math.min(1, p.hurt / 0.3)) * Math.PI) * 3) : 0);
+  ctx.globalAlpha = alpha;
+  drawKidAt(x, y, p.col, 0, p.walkT > 0 ? 1 + (Math.floor(performance.now() / 120) % 2) : 0);
+  if (p.hurt > 0) { ctx.globalAlpha = 0.45 * alpha; rect(COLORS.red, x, y + 1, 8, 14); ctx.globalAlpha = alpha; }
+  const a = p.ang, reach = p.swing > 0 ? 8 : 6;
+  rect(p.col.coat, Math.round(p.x + Math.cos(a) * 3.5) - 1, Math.round(p.y - 1 + Math.sin(a) * 3.5) - 1, 2, 2);
+  rect(COLORS.skin, Math.round(p.x + Math.cos(a) * reach) - 1, Math.round(p.y - 1 + Math.sin(a) * reach) - 1, 2, 2);
+  rect(COLORS.night, x - 1, y - 5, 10, 3);
+  const f = Math.max(0, p.hp / BT.hp);
+  rect(f > 0.6 ? COLORS.hatGreen : f > 0.3 ? COLORS.gold : COLORS.red, x, y - 4, Math.max(1, Math.round(8 * f)), 1);
+  if (p.i === bt.me || (bt.coop && p.human)) { const c = p.i === bt.me ? COLORS.gold : COLORS.ice; rect(c, x + 1, y - 8, 6, 1); rect(c, x + 2, y - 7, 4, 1); rect(c, x + 3, y - 6, 2, 1); }
+  ctx.globalAlpha = 1;
+}
+
+function btCam(bt) {
+  const me = bt.players[bt.me];
+  if (me.alive) return me;
+  return bt.players.find(p => p.human && p.alive) || me;
+}
+
+function drawBattle() {
+  const bt = state.battle, W = CONFIG.W, H = view.h;
+  state.buttons = [];
+  if (!bt) return;
+  const cam = btCam(bt), me = bt.players[bt.me];
+  ctx.clearRect(-8, -8, W + 16, H + 16);
+  rect(COLORS.night, 0, 0, W, H);
+  ctx.save();
+  ctx.translate(Math.round(W / 2 - cam.x), Math.round(H / 2 - cam.y));
+  ctx.drawImage(btGround(), 0, 0);
+  const L = cam.x - W / 2 - 16, Rt = cam.x + W / 2 + 16, T = cam.y - H / 2 - 20, B = cam.y + H / 2 + 20;
+  for (const f of bt.flakes) if (f.on && f.x > L && f.x < Rt && f.y > T && f.y < B) drawPowerAt(f.x, f.y, bt.t + f.x * 0.05);
+  const ents = [];
+  for (const t of bt.trees) if (t.x > L && t.x < Rt && t.y > T && t.y < B) ents.push([t.y + 15, null, t]);
+  const late = [];
+  for (const p of bt.players) {
+    if (!p.alive || p.x < L || p.x > Rt || p.y < T || p.y > B) continue;
+    if (btInGrass(bt, p)) { late.push(p); continue; }
+    ents.push([p.y + 6, p, p]);
+  }
+  ents.sort((a, b) => a[0] - b[0]);
+  for (const [, k, o] of ents) { if (k) btDrawKid(bt, o, 1); else ctx.drawImage(treeImg, o.x, o.y); }
+  for (const b of bt.balls) drawSnowball(b);
+  ctx.drawImage(bt.grassImg, 0, 0);                          // tall grass hides anyone standing in it
+  for (const p of late) {
+    if (p.i === bt.me) btDrawKid(bt, p, 0.6);
+    else if (p.reveal > 0) btDrawKid(bt, p, 0.9);
+    else if (bt.coop && p.human) btDrawKid(bt, p, 0.6);
+  }
+  drawParticles();
+  const z = btZone(bt, bt.t);
+  ctx.fillStyle = 'rgba(60,110,220,0.32)';                   // the storm outside the circle
+  ctx.beginPath(); ctx.rect(cam.x - W, cam.y - H, 2 * W, 2 * H); ctx.arc(z.x, z.y, z.r, 0, 6.2832, true); ctx.fill('evenodd');
+  ctx.strokeStyle = COLORS.snow; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(z.x, z.y, z.r, 0, 6.2832); ctx.stroke();
+  ctx.restore();
+  if (me.alive && state.aiming && state.aimValid && !bt.over) {   // dotted throw line from the boy (screen centre)
+    const a = -state.aimAngle * DEG;
+    for (let i = 0; i < CONFIG.aimDots; i++) { const d = 8 + i * CONFIG.aimDotSpacing; rect(i % 2 ? COLORS.shadow : COLORS.night, W / 2 + Math.cos(a) * d - 1, H / 2 - 1 + Math.sin(a) * d - 1, CONFIG.aimDotSize, CONFIG.aimDotSize); }
+  }
+  drawStick();
+  withInset(() => btHud(bt, me, z));
+  if (bt.t < 2.5 && !bt.over) {
+    ctx.globalAlpha = Math.min(1, (2.5 - bt.t) / 0.4);
+    drawTextShadow('BATTLE', W / 2, 90, 3, COLORS.gold, 'center');
+    drawTextShadow('BE THE LAST ONE STANDING', W / 2, 118, 1, COLORS.coatBlue, 'center');
+    ctx.globalAlpha = 1;
+  }
+  if (bt.popup) { ctx.globalAlpha = Math.min(1, bt.popup.t / 0.4); drawTextShadow(bt.popup.text, W / 2, 140, 2, COLORS.coatBlue, 'center'); ctx.globalAlpha = 1; }
+  if (bt.paused) btPauseUi(bt);
+  else if (bt.over && bt.endT > 1) btEndUi(bt, me);
+  drawCelebration();
+  if (isCoop() && net.lost) drawLost();
+}
+
+function btHud(bt, me, z) {
+  const W = CONFIG.W, s = btnH();
+  const alive = bt.players.filter(p => p.alive).length, rem = Math.max(0, Math.ceil(BT.matchTime - bt.t));
+  ctx.globalAlpha = 0.7;
+  rect(COLORS.night, 0, -view.safeTop, W, 11 + view.safeTop);
+  ctx.globalAlpha = 1;
+  drawText('KILLS ' + me.kills, 3, 3, 1, COLORS.snow);
+  drawText(Math.floor(rem / 60) + ':' + String(rem % 60).padStart(2, '0'), W / 2, 3, 1, rem <= 10 ? COLORS.red : COLORS.snow, 'center');
+  drawText('ALIVE ' + alive, W - 3, 3, 1, COLORS.snow, 'right');
+  // minimap: the map, the storm, this circle (white) and the next one (gold)
+  const ms = 44, mx = 3, my = 13, k = ms / BT.S, n = btNext(bt, bt.t);
+  ctx.globalAlpha = 0.8; rect(COLORS.night, mx - 1, my - 1, ms + 2, ms + 2); ctx.globalAlpha = 0.9; rect(COLORS.ice, mx, my, ms, ms); ctx.globalAlpha = 1;
+  ctx.save(); ctx.beginPath(); ctx.rect(mx, my, ms, ms); ctx.clip();
+  ctx.fillStyle = 'rgba(60,110,220,0.5)'; ctx.beginPath(); ctx.rect(mx, my, ms, ms); ctx.arc(mx + z.x * k, my + z.y * k, z.r * k, 0, 6.2832, true); ctx.fill('evenodd');
+  ctx.lineWidth = 1; ctx.strokeStyle = COLORS.snow; ctx.beginPath(); ctx.arc(mx + z.x * k, my + z.y * k, z.r * k, 0, 6.2832); ctx.stroke();
+  ctx.strokeStyle = COLORS.gold; ctx.beginPath(); ctx.arc(mx + n.x * k, my + n.y * k, n.r * k, 0, 6.2832); ctx.stroke();
+  ctx.restore();
+  for (const p of bt.players) if (p.alive && p.human) rect(p.i === bt.me ? COLORS.red : COLORS.coatBlue, Math.round(mx + p.x * k) - 1, Math.round(my + p.y * k) - 1, 3, 3);
+  for (let i = 0; i < BT.hp; i++) drawFlake(3 + i * 6, my + ms + 4, i < Math.ceil(me.hp - 0.001));
+  if (me.gunT > 0) drawTextShadow('GUN ' + Math.ceil(me.gunT), 3, my + ms + 14, 1, COLORS.coatBlue);
+  if (me.spdT > 0) drawTextShadow('SPEED ' + Math.ceil(me.spdT), 3, my + ms + 24, 1, COLORS.orange);
+  // status line under the top bar
+  const outside = me.alive && Math.hypot(me.x - z.x, me.y - z.y) > z.r;
+  const next = BT.shrinkEvery * (Math.floor(bt.t / BT.shrinkEvery) + 1) - bt.t;
+  if (!bt.over) {
+    if (!me.alive) drawTextShadow('YOU ARE OUT - WATCHING', W / 2, 14, 1, COLORS.red, 'center');
+    else if (outside) drawTextShadow('GET INSIDE THE CIRCLE!', W / 2, 14, 1, COLORS.red, 'center');
+    else if (btShrinking(bt, bt.t)) drawTextShadow('CIRCLE CLOSING', W / 2, 14, 1, COLORS.red, 'center');
+    else if (bt.t < BT.matchTime && next <= 10) drawTextShadow('CIRCLE IN ' + Math.ceil(next), W / 2, 14, 1, COLORS.coatBlue, 'center');
+  }
+  // pause (solo only), mute, and the perks you hold (tap to use)
+  const x = W - 3 - s, y = 13, act = btCanAct();
+  if (!bt.coop) {
+    ctx.globalAlpha = 0.7; rect(COLORS.night, x, y, s, s); ctx.globalAlpha = 1;
+    const bw = Math.max(2, Math.round(s / 6)), bh = Math.round(s / 2);
+    rect(COLORS.snow, x + Math.round(s / 2) - bw - 1, y + Math.round((s - bh) / 2), bw, bh);
+    rect(COLORS.snow, x + Math.round(s / 2) + 1, y + Math.round((s - bh) / 2), bw, bh);
+    if (!bt.over && !bt.paused) state.buttons.push({ x, y: y + view.ty, w: s, h: s, onTap: () => { bt.paused = true; endAim(); state.stick = null; } });
+  }
+  drawMuteButton(bt.coop ? x : x - s - 4, y, !bt.paused);
+  const ps = Math.round(s * 0.75), px = W - 3 - ps;
+  let py = y + s + 6;
+  for (const id of BT.perks) {
+    const c = me.perks[id];
+    if (!(c > 0)) continue;
+    ctx.globalAlpha = 0.5; rect(COLORS.gold, px - 1, py - 1, ps + 2, ps + 2); rect(COLORS.night, px, py, ps, ps);
+    perkIcon(id, px + Math.floor(ps / 2), py + Math.floor(ps / 2) - 2, Math.max(1, Math.floor((ps - 4) / 5)));
+    ctx.globalAlpha = 1;
+    drawText(c, px + ps - 1, py + ps - 6, 1, COLORS.gold, 'right');
+    if (act) state.buttons.push({ x: px, y: py + view.ty, w: ps, h: ps, onTap: () => btUseMine(id) });
+    py += ps + 4;
+  }
+}
+
+function btPauseUi(bt) {
+  dim();
+  drawTextShadow('PAUSED', CONFIG.W / 2, 80, 3, COLORS.snow, 'center');
+  const h = btnH();
+  button('RESUME', CONFIG.W / 2, 140, 110, 1, () => { bt.paused = false; });
+  button('QUIT', CONFIG.W / 2, 140 + h + 10, 110, 1, () => setMode('battlemenu'));
+}
+function btEndUi(bt, me) {
+  const W = CONFIG.W, h = Math.ceil(btnH() * 1.3), guest = net.role === 'guest';
+  dim();
+  if (bt.over === 1) drawTextShadow('VICTORY!', W / 2, 40, 3, COLORS.gold, 'center');
+  else drawTextShadow('ELIMINATED', W / 2, 40, 3, COLORS.snow, 'center');
+  drawTextShadow(bt.over === 1 ? 'LAST ONE STANDING' : 'PLACE: ' + (me.place || 12) + ' OF 12', W / 2, 78, 1, COLORS.snow, 'center');
+  drawTextShadow('KILLS: ' + me.kills, W / 2, 96, 2, COLORS.snow, 'center');
+  drawTextShadow('WINS: ' + btWins(bt), W / 2, 118, 2, COLORS.gold, 'center');
+  if (state.lastXp > 0) drawText5('+' + state.lastXp + ' TO YOUR LEVEL BAR', W / 2, 142, 1, COLORS.snow, 'center', COLORS.night);
+  if (guest) drawTextShadow('WAITING FOR HOST...', W / 2, 172, 1, COLORS.snow, 'center');
+  else button('PLAY AGAIN', W / 2, 180, 150, 1.3, startBattle);
+  button('MENU', W / 2, 180 + h + 10, 100, 1, bt.coop ? leaveCoop : () => setMode('battlemenu'), COLORS.ice);
+}
+
+function drawBattleMenu() {
+  const cx = CONFIG.W / 2, bh = Math.max(btnH(), 32), step = bh + 8, y0 = 76 + Math.ceil(bh / 2);
+  drawText5('BATTLE', cx, 50, 3, COLORS.coatBlue, 'center', COLORS.night);
+  button('SOLO', cx, y0, 110, bh / btnH(), () => { state.wantBattle = false; startBattle(); }, COLORS.hatGreen, 1, 'WINS: ' + state.bWins);
+  button('CO-OP', cx, y0 + step, 110, bh / btnH(), () => { state.wantBattle = true; openCoopMenu(); }, COLORS.ice, 1, 'WINS: ' + state.bCoopWins);
+  button('BACK', cx, y0 + 2 * step, 76, 1, () => setMode('title'), COLORS.shadow, 1);
+}
+
 let last = performance.now();
 function frame(now) {
   const dt = Math.min(CONFIG.maxDt, (now - last) / 1000);
   last = now;
   if (net.role === 'guest' && (state.mode === 'playing' || state.mode === 'gameover')) updateGuest(dt);   // the host runs the world
   else if (state.mode === 'playing') update(dt);
+  else if (state.mode === 'battle') btFrame(dt);
   else if (state.mode === 'cutscene') { updateFlakes(dt); updateCutscene(dt); }
   else if (state.mode === 'runpan') { updateFlakes(dt); if ((state.pan.t += dt) >= RUN_T + PAN_T) setMode(PAGE_MODES[state.pan.to]); }
   else if (state.mode === 'castlewin') { updateFlakes(dt); updateCastleWin(dt); }
