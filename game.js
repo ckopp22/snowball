@@ -19,6 +19,8 @@ const CONFIG = {
   kidY: 275,
   coopKidXs: [79, 93],    // co-op: two boys side by side behind the fort (top-left x of each)
   coopKidY: 279,
+  runnerStickDead: 0.15,  // joystick dead zone (0..1); the rest is rescaled
+  runnerAccel: 12,        // how fast Runner velocity eases to the stick (1/s)
   runnerSpeed: 55,        // px/s the Runner moves at full joystick
   homeSpeed: 70,          // px/s the boy runs along the inside of the Home
   homeWinHp: 10,          // window boards; enemies chew them down, the boy standing at the window repairs them
@@ -818,10 +820,24 @@ function moveRunner(dt) {
     if (net.role !== 'guest') homeRepair(dt);
     return;
   }
-  if (!state.runner || !state.stick) return;
-  const st = state.stick, m = Math.hypot(st.dx, st.dy), k = m > 1 ? 1 / m : 1;
-  state.px = clampRx(state.px + st.dx * k * CONFIG.runnerSpeed * dt);
-  state.py = clampRy(state.py + st.dy * k * CONFIG.runnerSpeed * dt);
+  if (!state.runner) return;
+  let tx = 0, ty = 0;
+  const st = state.stick;
+  if (st) {
+    const m = Math.hypot(st.dx, st.dy), D = CONFIG.runnerStickDead;
+    if (m > D) { const f = Math.min(1, (m - D) / (1 - D)) / m; tx = st.dx * f; ty = st.dy * f; }
+  }
+  const a = Math.min(1, CONFIG.runnerAccel * dt);
+  state.rvx = (state.rvx || 0) + (tx - (state.rvx || 0)) * a;
+  state.rvy = (state.rvy || 0) + (ty - (state.rvy || 0)) * a;
+  if (!st && Math.hypot(state.rvx, state.rvy) < 0.02) state.rvx = state.rvy = 0;
+  state.px = clampRx(state.px + state.rvx * CONFIG.runnerSpeed * dt);
+  state.py = clampRy(state.py + state.rvy * CONFIG.runnerSpeed * dt);
+  for (const p of activeTrees()) {                            // trunks block the kid's feet; push out so he slides around
+    const cx = p[0] + 4, cy = p[1] + CONFIG.treeBaseY + 1, R = CONFIG.treeBaseRadius + 3;
+    const dx = state.px - cx, dy = state.py + 7 - cy, d = Math.hypot(dx, dy);
+    if (d < R) { const nx = d > 0.01 ? dx / d : 0, ny = d > 0.01 ? dy / d : 1; state.px = clampRx(state.px + nx * (R - d)); state.py = clampRy(state.py + ny * (R - d)); }
+  }
 }
 // Runner: the player (either one, in co-op) closest to a point
 function runTarget(x, y) {
@@ -2130,7 +2146,7 @@ const breath = slot => (Math.sin(performance.now() / 1000 * 2.2 + slot * 1.3) > 
 
 function drawKid(slot) {
   const { x, y } = kidPos(slot);
-  const p = pl(slot), walking = (state.runner || state.home) && (p === state ? state.stick && (state.home && !state.door.open ? Math.abs(state.stick.dx) > 0.1 : (state.stick.dx || state.stick.dy)) : p.walkT > 0);
+  const p = pl(slot), walking = (state.runner || state.home) && (p === state ? (state.stick || (state.runner && (state.rvx || state.rvy))) && (state.home && !state.door.open ? Math.abs(state.stick.dx) > 0.1 : (state.runner ? Math.hypot(state.rvx || 0, state.rvy || 0) > 0.1 : (state.stick.dx || state.stick.dy))) : p.walkT > 0);
   drawKidAt(x, y, slot, breath(slot), walking ? 1 + (Math.floor(state.time * 8) % 2) : 0);
   if (state.hurt > 0 && Math.floor(state.hurt * 20) % 2 === 0) {      // red flash, blinking
     ctx.globalAlpha = 0.65;
@@ -2270,6 +2286,15 @@ function drawWinAlerts() {
   const wy = homeWallY();
   for (const side of [-1, 1]) {
     if (inside.some(b => side < 0 ? b.x < state.camX : b.x > state.camX + CONFIG.W)) rect(COLORS.red, side < 0 ? 0 : CONFIG.W - 3, wy - 12, 3, 76);
+  }
+}
+
+function drawEdgeWarnings() {                 // Runner: blinking red mark where an off-screen bully is about to walk in
+  if (!state.runner || state.mode !== 'playing' || Math.floor(state.time * 8) % 2) return;
+  for (const b of state.bullies) {
+    if (b.state !== 'walking' || (b.x >= 0 && b.x <= CONFIG.W && b.y >= 0 && b.y <= view.h)) continue;
+    const x = Math.round(Math.max(3, Math.min(CONFIG.W - 4, b.x))), y = Math.round(Math.max(3, Math.min(view.h - 12, b.y)));
+    rect(COLORS.red, x - 1, y, 3, 6); rect(COLORS.red, x - 1, y + 8, 3, 3);
   }
 }
 
@@ -3173,6 +3198,7 @@ function drawFrame() {
   for (const e of state.enemyBalls) drawEnemyBall(e);
   drawParticles();
   if (state.home) ctx.restore();
+  drawEdgeWarnings();
   drawStick();
   drawWinAlerts();
   if (state.mode === 'title') { drawLevelUi(); withInset(drawTitle); }
