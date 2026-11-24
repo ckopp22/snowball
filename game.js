@@ -970,8 +970,8 @@ const LB_LIM0 = () => homeWallY() - 120, LB_LIMF = () => CONFIG.lastTop + 24;   
 
 // The snow fort at the Castle: a boy standing in it takes no damage and enemies are kept out
 const FORT_X0 = CONFIG.W - 34, FORT_X1 = CONFIG.W + 34, FORT_Y0 = CONFIG.lastTop + 150, FORT_Y1 = CONFIG.lastTop + 186;   // well back from the Castle, like the Fort levels
-const FORT_WALLS = [[FORT_X0, FORT_Y0, FORT_X1 - FORT_X0, 6], [FORT_X0, FORT_Y0, 6, FORT_Y1 - FORT_Y0], [FORT_X1 - 6, FORT_Y0, 6, FORT_Y1 - FORT_Y0], [FORT_X0, FORT_Y1 - 6, 24, 6], [FORT_X1 - 24, FORT_Y1 - 6, 24, 6]];   // x, y, w, h (same as drawLastFort)
-const inLastFort = p => state.last && p.px >= FORT_X0 + 6 && p.px <= FORT_X1 - 6 && p.py >= FORT_Y0 + 6 && p.py <= FORT_Y1 - 6;
+const FORT_WALLS = []; const _FORT_OLD = [[FORT_X0, FORT_Y0, FORT_X1 - FORT_X0, 6], [FORT_X0, FORT_Y0, 6, FORT_Y1 - FORT_Y0], [FORT_X1 - 6, FORT_Y0, 6, FORT_Y1 - FORT_Y0], [FORT_X0, FORT_Y1 - 6, 24, 6], [FORT_X1 - 24, FORT_Y1 - 6, 24, 6]];   // x, y, w, h (same as drawLastFort)
+const inLastFort = p => false && p.px >= FORT_X0 + 6 && p.px <= FORT_X1 - 6 && p.py >= FORT_Y0 + 6 && p.py <= FORT_Y1 - 6;
 const anyoneInFort = () => state.last && slots().some(sl => inLastFort(pl(sl)));
 function keepOutOfFort(b, T) {          // while a boy is inside, enemies can't walk through the fort walls
   const r = T.radius;
@@ -3172,7 +3172,7 @@ function drawFrame() {
   drawShadow();
   drawPrints();
   drawHome();
-  if (state.last) { drawCastle(); drawLastFort(); if (state.lbWave < LB_WAVES) drawLastBarrier(); }
+  if (state.last) { drawCastle(); if (state.lbWave < LB_WAVES) drawLastBarrier(); }
   drawTreesAndBullies();
   drawPower();
   drawAvalanche();
