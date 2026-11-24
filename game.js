@@ -1222,6 +1222,7 @@ function startWave(n) {
   state.yetiLeft = yetiCount(n);
   state.toSpawn = yetiWave(n) ? state.yetiLeft : waveCount(n);                 // spawned at random points of the wave (they replace regular spawns)
   state.spawnTimer = CONFIG.firstSpawnDelay;
+  if (yetiWave(n) && !state.power) state.powerTimer = Math.min(state.powerTimer, 2);   // guarantee a snowflake on Yeti waves
   state.waveEnded = false;
   state.banner = CONFIG.bannerTime;
 }
@@ -1309,7 +1310,7 @@ function updateWaves(dt) {
     if (state.spawnTimer <= 0) {
       spawnBully();
       state.toSpawn--;
-      state.spawnTimer = waveGap(state.wave);
+      state.spawnTimer = yetiWave(state.wave) ? 4.5 : waveGap(state.wave);   // Yeti waves: one Yeti every 4.5 s
     }
   } else if (!state.waveEnded) {
     // Wave is over once every bully is knocked down or has reached the fort
