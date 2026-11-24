@@ -246,7 +246,7 @@ function saveBest(v, key) {
 // ---------- Players / co-op state ----------
 // role: 'solo' | 'host' | 'guest' (set once connected). The host is slot 0 and runs the whole game; the guest is slot 1.
 const net = { role: 'solo', status: 'idle', error: '', code: '', peer: null, conn: null,
-              localSlot: 0, lastRx: 0, acc: 0, evq: [], lost: false };
+              localSlot: 0, lastRx: 0, acc: 0, vh: 0, gh: 0, evq: [], lost: false };
 const isCoop = () => net.role !== 'solo';
 const slots = () => (isCoop() ? [0, 1] : [0]);
 const pl = slot => (slot === net.localSlot ? state : state.remote);   // the local player's fields live on state itself
@@ -619,7 +619,7 @@ function throwSnowball(slot, auto, angle) {          // auto = machine-gun shot:
   const p = pl(slot);
   if (angle !== undefined) p.aimAngle = angle;
   if (net.role === 'guest') {                         // the host simulates the world: ask it to throw
-    netSend({ k: 't', a: r1(p.aimAngle), x: r1(state.px), y: r1(state.py - wallOff()) });
+    netSend({ k: 't', a: r1(p.aimAngle), x: r1(state.px), y: r1(state.py) });
     p.cooldown = CONFIG.throwCooldown;                // local feedback right away
     p.swing = CONFIG.armSwingTime;
     
@@ -636,13 +636,12 @@ function throwSnowball(slot, auto, angle) {          // auto = machine-gun shot:
 }
 
 // Guest only: tell the host where we are aiming (throttled) so it can draw our dotted line and use it for the machine gun
-const wallOff = () => state.home ? homeWallY() : 0;   // co-op sends y relative to the house wall: each screen has its own height
 function sendAim(force) {
   if (net.role !== 'guest' || state.mode === 'battle') return;
   const t = performance.now();
   if (!force && t - (net.lastAimSent || 0) < 60) return;
   net.lastAimSent = t;
-  netSend({ k: 'a', a: r1(state.aimAngle), v: state.aiming && state.aimValid ? 1 : 0, x: r1(state.px), y: r1(state.py - wallOff()) });
+  netSend({ k: 'a', a: r1(state.aimAngle), v: state.aiming && state.aimValid ? 1 : 0, x: r1(state.px), y: r1(state.py) });
 }
 
 function hitButton(p) {
@@ -786,7 +785,8 @@ const homeWalkable = (x, y) => {            // where the boy may stand (door ope
   if (Math.abs(x - state.door.x) <= 5 && y >= wy - 8 && y <= wy + 54) return true;             // doorway
   return y >= (state.last ? Math.max(CONFIG.lastTop + 24, state.lbLimit) : 24) && y <= wy - 8 && x >= 8 && x <= CONFIG.W * 2 - 8;   // yard
 };
-const homeWallY = () => view.h - 130 + (state.mode === 'homelevels' || state.mode === 'runpan' ? 24 : 0);   // the level-select page draws the house a little lower   // the house sits above the bottom edge so thumbs have room
+const worldH = () => net.vh || view.h;   // co-op: both screens use the shorter one's height so the house and everything near it line up
+const homeWallY = () => worldH() - 130 + (state.mode === 'homelevels' || state.mode === 'runpan' ? 24 : 0);   // the level-select page draws the house a little lower   // the house sits above the bottom edge so thumbs have room
 function homeRepair(dt) {                     // every boy standing at a window repairs it
   const wy = homeWallY();
   let fixing = null;
@@ -1850,7 +1850,7 @@ function netCleanup() {
 
 function resetNet() {
   netCleanup();
-  Object.assign(net, { role: 'solo', status: 'idle', error: '', code: '', localSlot: 0, lost: false, evq: [], acc: 0 });
+  Object.assign(net, { role: 'solo', status: 'idle', error: '', code: '', localSlot: 0, lost: false, evq: [], acc: 0, vh: 0, gh: 0 });
 }
 
 function leaveCoop() { resetNet(); state.entry = ''; resetGame(); setMode('title'); }
@@ -1911,7 +1911,7 @@ function joinGame(code) {
     net.conn = conn;
     conn.on('open', () => {
       clearTimeout(timer);
-      Object.assign(net, { role: 'guest', localSlot: 1, status: 'connected', lost: false, lastRx: performance.now(), evq: [], acc: 0 });
+      Object.assign(net, { role: 'guest', localSlot: 1, status: 'connected', lost: false, lastRx: performance.now(), evq: [], acc: 1, vh: 0, gh: 0 });
     });
     conn.on('data', guestOnData);
     conn.on('close', () => { if (net.conn === conn) net.lost = true; });
@@ -1929,6 +1929,7 @@ function hostOnData(d) {
   net.lastRx = performance.now(); net.lost = false;
   if (state.battle) { btHostOnData(d); return; }
   const r = state.remote;
+  if (d.k === 'h' && Number.isFinite(d.vh)) net.gh = d.vh;
   if (d.k === 'a' && Number.isFinite(d.a)) {
     r.aimAngle = (state.runner || state.home) ? d.a : Math.min(CONFIG.maxAngle, Math.max(CONFIG.minAngle, d.a));
     r.aimValid = r.aiming = !!d.v;
@@ -1946,7 +1947,6 @@ function hostOnData(d) {
 function setRemotePos(d) {
   if (!(state.runner || state.home) || !Number.isFinite(d.x) || !Number.isFinite(d.y)) return;
   const r = state.remote;
-  d = { x: d.x, y: d.y + wallOff() };
   let x = clampRx(d.x), y = clampRy(d.y);
   if (state.home) {                                       // the guest's boy stays on the floor (or the yard, door open)
     const wy = homeWallY();
@@ -1962,7 +1962,7 @@ function setRemotePos(d) {
 function buildSnapshot() {
   const ev = net.evq; net.evq = [];
   return {
-    k: 's', rn: state.runner ? 1 : 0, hm: state.home ? 1 : 0, la: state.last ? 1 : 0, ch: state.castleHp, lb: r1(state.lbLimit), lw: state.lbWave, hp: [r1(state.px), r1(state.py - wallOff())], m: state.mode, sc: [pl(0).score, pl(1).score], w: state.wave, h: state.health,
+    k: 's', vh: net.vh, rn: state.runner ? 1 : 0, hm: state.home ? 1 : 0, la: state.last ? 1 : 0, ch: state.castleHp, lb: r1(state.lbLimit), lw: state.lbWave, hp: [r1(state.px), r1(state.py)], m: state.mode, sc: [pl(0).score, pl(1).score], w: state.wave, h: state.health,
     fl: r1(state.flash * 10) / 10, bn: r1(state.banner), tm: r1(state.time), tr: state.treesRemoved,
     pu: state.popup ? { s: state.popup.text, t: r1(state.popup.t) } : null,
     pw: state.power ? [r1(state.power.x), r1(state.power.baseY), r1(state.power.age)] : null,
@@ -1988,6 +1988,7 @@ function guestOnData(d) {
 
 function applySnapshot(d) {
   const prev = state.mode;
+  net.vh = d.vh || 0;
   state.runner = !!d.rn; state.home = !!d.hm; state.last = !!d.la; state.castleHp = d.ch || 0; state.lbLimit = d.lb || 0; state.lbWave = d.lw || 0;
   if (d.m === 'castlewin' && prev !== 'castlewin') { state.cwT = 0; spawnConfetti(); state.lastDone = true; saveBest(1, CONFIG.lastDoneKey); }
   if (d.m === 'cooplobby') {                                           // host is in the lobby: nothing to simulate
@@ -2009,9 +2010,9 @@ function applySnapshot(d) {
   state.gun = d.g[net.localSlot];
   const r = state.remote;                                              // the host, from the guest's point of view
   if (d.hp) {
-    if (r.tx === undefined) { r.px = d.hp[0]; r.py = d.hp[1] + wallOff(); }
-    else if (Math.hypot(d.hp[0] - r.tx, d.hp[1] + wallOff() - r.ty) > 0.05) r.walkT = 0.15;
-    r.tx = d.hp[0]; r.ty = d.hp[1] + wallOff();
+    if (r.tx === undefined) { r.px = d.hp[0]; r.py = d.hp[1]; }
+    else if (Math.hypot(d.hp[0] - r.tx, d.hp[1] - r.ty) > 0.05) r.walkT = 0.15;
+    r.tx = d.hp[0]; r.ty = d.hp[1];
   }
   r.gun = d.g[1 - net.localSlot]; r.aimAngle = d.ha[0]; r.aiming = r.aimValid = !!d.ha[1]; r.swing = d.ha[2];
 
@@ -2076,8 +2077,9 @@ function updateGuest(dt) {
 // Every frame while connected: host sends snapshots, guest sends a heartbeat; either side notices a dead link
 function netTick(dt) {
   net.acc += dt;
+  if (net.role === 'host') net.vh = net.gh ? Math.min(view.h, net.gh) : 0;
   if (net.role === 'host' && net.acc >= CONFIG.netInterval) { net.acc = 0; netSend(state.battle ? btSnapshot() : buildSnapshot()); }
-  else if (net.role === 'guest' && net.acc >= 1) { net.acc = 0; netSend({ k: 'h' }); }
+  else if (net.role === 'guest' && net.acc >= 1) { net.acc = 0; netSend({ k: 'h', vh: view.h }); }
   if (!net.lost && performance.now() - net.lastRx > CONFIG.netTimeout * 1000) net.lost = true;
 }
 
