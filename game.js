@@ -619,7 +619,7 @@ function throwSnowball(slot, auto, angle) {          // auto = machine-gun shot:
   const p = pl(slot);
   if (angle !== undefined) p.aimAngle = angle;
   if (net.role === 'guest') {                         // the host simulates the world: ask it to throw
-    netSend({ k: 't', a: r1(p.aimAngle), x: r1(state.px), y: r1(state.py) });
+    netSend({ k: 't', a: r1(p.aimAngle), x: r1(state.px), y: r1(state.py - wallOff()) });
     p.cooldown = CONFIG.throwCooldown;                // local feedback right away
     p.swing = CONFIG.armSwingTime;
     
@@ -636,12 +636,13 @@ function throwSnowball(slot, auto, angle) {          // auto = machine-gun shot:
 }
 
 // Guest only: tell the host where we are aiming (throttled) so it can draw our dotted line and use it for the machine gun
+const wallOff = () => state.home ? homeWallY() : 0;   // co-op sends y relative to the house wall: each screen has its own height
 function sendAim(force) {
   if (net.role !== 'guest' || state.mode === 'battle') return;
   const t = performance.now();
   if (!force && t - (net.lastAimSent || 0) < 60) return;
   net.lastAimSent = t;
-  netSend({ k: 'a', a: r1(state.aimAngle), v: state.aiming && state.aimValid ? 1 : 0, x: r1(state.px), y: r1(state.py) });
+  netSend({ k: 'a', a: r1(state.aimAngle), v: state.aiming && state.aimValid ? 1 : 0, x: r1(state.px), y: r1(state.py - wallOff()) });
 }
 
 function hitButton(p) {
@@ -1945,6 +1946,7 @@ function hostOnData(d) {
 function setRemotePos(d) {
   if (!(state.runner || state.home) || !Number.isFinite(d.x) || !Number.isFinite(d.y)) return;
   const r = state.remote;
+  d = { x: d.x, y: d.y + wallOff() };
   let x = clampRx(d.x), y = clampRy(d.y);
   if (state.home) {                                       // the guest's boy stays on the floor (or the yard, door open)
     const wy = homeWallY();
@@ -1960,7 +1962,7 @@ function setRemotePos(d) {
 function buildSnapshot() {
   const ev = net.evq; net.evq = [];
   return {
-    k: 's', rn: state.runner ? 1 : 0, hm: state.home ? 1 : 0, la: state.last ? 1 : 0, ch: state.castleHp, lb: r1(state.lbLimit), lw: state.lbWave, hp: [r1(state.px), r1(state.py)], m: state.mode, sc: [pl(0).score, pl(1).score], w: state.wave, h: state.health,
+    k: 's', rn: state.runner ? 1 : 0, hm: state.home ? 1 : 0, la: state.last ? 1 : 0, ch: state.castleHp, lb: r1(state.lbLimit), lw: state.lbWave, hp: [r1(state.px), r1(state.py - wallOff())], m: state.mode, sc: [pl(0).score, pl(1).score], w: state.wave, h: state.health,
     fl: r1(state.flash * 10) / 10, bn: r1(state.banner), tm: r1(state.time), tr: state.treesRemoved,
     pu: state.popup ? { s: state.popup.text, t: r1(state.popup.t) } : null,
     pw: state.power ? [r1(state.power.x), r1(state.power.baseY), r1(state.power.age)] : null,
@@ -2007,9 +2009,9 @@ function applySnapshot(d) {
   state.gun = d.g[net.localSlot];
   const r = state.remote;                                              // the host, from the guest's point of view
   if (d.hp) {
-    if (r.tx === undefined) { r.px = d.hp[0]; r.py = d.hp[1]; }
-    else if (Math.hypot(d.hp[0] - r.tx, d.hp[1] - r.ty) > 0.05) r.walkT = 0.15;
-    r.tx = d.hp[0]; r.ty = d.hp[1];
+    if (r.tx === undefined) { r.px = d.hp[0]; r.py = d.hp[1] + wallOff(); }
+    else if (Math.hypot(d.hp[0] - r.tx, d.hp[1] + wallOff() - r.ty) > 0.05) r.walkT = 0.15;
+    r.tx = d.hp[0]; r.ty = d.hp[1] + wallOff();
   }
   r.gun = d.g[1 - net.localSlot]; r.aimAngle = d.ha[0]; r.aiming = r.aimValid = !!d.ha[1]; r.swing = d.ha[2];
 
