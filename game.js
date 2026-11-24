@@ -507,6 +507,7 @@ fort.height = fortMask.height = fortShadow.height = CONFIG.H;
 const state = {
   mode: 'splash',      // splash | title | playing | paused | gameover
   bullies: [],
+  tip: null,           // level-1 tutorial text {lines, t}
   yetiLeft: 0,         // Yetis still to spawn this wave
   particles: [],
   prints: [],          // footprints: { x, y, t, w }
@@ -912,7 +913,7 @@ const waveGap = n => CONFIG.gapMin + (CONFIG.gapStart - CONFIG.gapMin) * Math.po
 
 function resetGame() {
   Object.assign(state, {
-    snowballs: [], enemyBalls: [], bullies: [], yetiLeft: 0, particles: [], prints: [], cooldown: 0, swing: 0,
+    snowballs: [], enemyBalls: [], bullies: [], tip: null, yetiLeft: 0, particles: [], prints: [], cooldown: 0, swing: 0,
     score: 0, newBest: false, health: CONFIG.fortHealth, flash: 0, hurt: 0,
     wave: 0, toSpawn: 0, spawnTimer: 0, waveEnded: false, breakTimer: 0, banner: 0, time: 0,
     power: null, avalanche: null, powerTimer: CONFIG.powerFirstDelay, gun: 0, gunTimer: 0, treesRemoved: 0, treeReturnTimer: 0, popup: null, remote: freshRemote(),
@@ -1150,6 +1151,7 @@ function startStory(n) {
   const first = 2 * (n - 1) + 1;
   state.story = { level: n };
   startWave(first);
+  if (n === 1) state.tip = { lines: ['PULL BACK LIKE A SLINGSHOT', 'AND LET GO TO THROW A SNOWBALL'], t: 9 };
 }
 
 function startRunnerLevel(n) {            // Runner level n: no fort, clear a set number of enemies; difficulty follows wave 2n-1
@@ -1158,6 +1160,7 @@ function startRunnerLevel(n) {            // Runner level n: no fort, clear a se
   state.mode = 'playing';
   state.story = { level: n, runner: true };
   startWave(2 * n - 1);
+  if (n === 1) state.tip = { lines: ['LEFT SIDE OF SCREEN: MOVE', 'RIGHT SIDE OF SCREEN: THROW'], t: 9 };
   state.toSpawn = 8 + 3 * n;
   state.yetiLeft = n < 3 ? 0 : Math.min(CONFIG.yetiMax, 1 + Math.floor((n - 3) / 2));   // Yetis mixed in from level 3: 1, +1 every 2 levels
 }
@@ -1410,6 +1413,7 @@ function updatePower(dt) {
     }
   }
   if (state.popup && (state.popup.t -= dt) <= 0) state.popup = null;
+  if (state.tip && (state.tip.t -= dt) <= 0) state.tip = null;
 }
 
 // Wave N shows N-1 trees (none in wave 1), up to treeMax; the power-up can hide them for a while
@@ -2658,6 +2662,12 @@ function drawPowerAt(px, py, age) {
   rect(COLORS.gold, x + sp[0] + 1, y + sp[1], 1, 3);
 }
 
+function drawTip() {                       // level-1 how-to-play hint
+  if (!state.tip || state.mode !== 'playing') return;
+  ctx.globalAlpha = Math.min(1, state.tip.t / 0.6);
+  state.tip.lines.forEach((l, i) => drawTextShadow(l, CONFIG.W / 2, 160 + i * 12, 1, COLORS.snow, 'center'));
+  ctx.globalAlpha = 1;
+}
 function drawPopup() {
   if (!state.popup || state.mode !== 'playing') return;
   ctx.globalAlpha = Math.min(1, state.popup.t / 0.4);
@@ -3172,7 +3182,7 @@ function drawFrame() {
   else {
     withInset(drawHud);
     drawBanner();
-    drawPopup();
+    drawPopup(); drawTip();
     if (state.mode === 'paused') drawPaused();
     else if (state.mode === 'perkconfirm' || (state.ask && state.mode === 'playing')) drawPerkConfirm();
     else if (state.mode === 'gameover') drawGameOver();
