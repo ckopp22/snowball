@@ -990,10 +990,13 @@ function updateLastBattle(dt) {
     }
     return;
   }
-  if ((state.spawnTimer -= dt) > 0) return;       // the way is open: keep them coming at the Castle
+  const yetis = state.bullies.filter(b => b.type === 'yeti' && b.state === 'walking').length;   // the way is open: always keep the chosen number of Yetis out, a new one 2 s after one falls
+  if (yetis >= state.lastSel) state.yetiT = 2;
+  else if ((state.yetiT = (state.yetiT ?? 2) - dt) <= 0) { state.yetiLeft = 1; state.toSpawn = 1; spawnBully(); state.yetiT = 2; }
+  if ((state.spawnTimer -= dt) > 0) return;       // keep them coming at the Castle
   state.spawnTimer = rand(2, 3.2);
-  if (live >= 10) return;
-  if (++state.lastN % 12 === 0) spawnLastYetis(); else spawnBully();
+  if (live - yetis >= 10) return;
+  spawnBully();
 }
 
 // The barrier across the map while the next wave isn't beaten
