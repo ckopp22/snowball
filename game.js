@@ -988,7 +988,7 @@ function updateLastBattle(dt) {
   const guards = state.bullies.filter(b => b.guard && b.state === 'walking').length;
   const inFort = anyoneInFort();
   if (guards >= CONFIG.castleGuards) state.guardT = 2;          // a new one comes out of the Castle 2 s after one is hit
-  else if (!inFort && (state.guardT -= dt) <= 0) { addGuard(CONFIG.W, CONFIG.lastTop + 6, guards); state.guardT = 2; }
+  else if (!slots().every(sl => inLastFort(pl(sl))) && (state.guardT -= dt) <= 0) { addGuard(CONFIG.W, CONFIG.lastTop + 6, guards); state.guardT = 2; }
   const live = state.bullies.filter(b => !b.guard && b.state === 'walking').length;
   if (state.lbWave < LB_WAVES) {
     if (state.lbLeft > 0) {
