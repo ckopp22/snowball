@@ -780,7 +780,6 @@ function usePerk(id, slot = net.localSlot) {
 }
 const windowAttackers = w => state.bullies.filter(b => b.state === 'walking' && b.phase === 1 && state.wins[b.win] === w).length;
 const homeWalkable = (x, y) => {            // where the boy may stand (door open)
-  if (state.last && FORT_WALLS.some(w => x > w[0] - 3 && x < w[0] + w[2] + 3 && y > w[1] - 3 && y < w[1] + w[3] + 3)) return false;   // the snow fort's walls are solid; the doorway is the way in
   const wy = homeWallY(), L = CONFIG.homeL + 18, R = CONFIG.homeR - 18;
   if (y >= wy + 18 && y <= wy + 54) return x >= L && x <= R;                                   // floor
   if (Math.abs(x - state.door.x) <= 5 && y >= wy - 8 && y <= wy + 54) return true;             // doorway
@@ -969,26 +968,14 @@ const LB_WAVES = 5, lbWaveSize = k => 6 + 3 * k;
 const LB_LIM0 = () => homeWallY() - 120, LB_LIMF = () => CONFIG.lastTop + 24;   // how far north the boy may go at first / at the end
 
 // The snow fort at the Castle: a boy standing in it takes no damage and enemies are kept out
-const FORT_X0 = CONFIG.W - 34, FORT_X1 = CONFIG.W + 34, FORT_Y0 = CONFIG.lastTop + 150, FORT_Y1 = CONFIG.lastTop + 186;   // well back from the Castle, like the Fort levels
-const FORT_WALLS = []; const _FORT_OLD = [[FORT_X0, FORT_Y0, FORT_X1 - FORT_X0, 6], [FORT_X0, FORT_Y0, 6, FORT_Y1 - FORT_Y0], [FORT_X1 - 6, FORT_Y0, 6, FORT_Y1 - FORT_Y0], [FORT_X0, FORT_Y1 - 6, 24, 6], [FORT_X1 - 24, FORT_Y1 - 6, 24, 6]];   // x, y, w, h (same as drawLastFort)
-const inLastFort = p => false && p.px >= FORT_X0 + 6 && p.px <= FORT_X1 - 6 && p.py >= FORT_Y0 + 6 && p.py <= FORT_Y1 - 6;
-const anyoneInFort = () => state.last && slots().some(sl => inLastFort(pl(sl)));
-function keepOutOfFort(b, T) {          // while a boy is inside, enemies can't walk through the fort walls
-  const r = T.radius;
-  if (b.x < FORT_X0 - r || b.x > FORT_X1 + r || b.y < FORT_Y0 - r || b.y > FORT_Y1 + r) return;
-  const d = [b.x - (FORT_X0 - r), (FORT_X1 + r) - b.x, b.y - (FORT_Y0 - r), (FORT_Y1 + r) - b.y], m = Math.min(...d), k = d.indexOf(m);
-  if (k === 0) b.x -= m; else if (k === 1) b.x += m; else if (k === 2) b.y -= m; else b.y += m;
-  b.x0 = b.x;
-}
 
 function spawnLastYetis() {            // the chosen badge = number of Yetis that come out of the Castle together
   for (let i = 0; i < state.lastSel; i++) { state.yetiLeft = 1; state.toSpawn = 1; spawnBully(); }
 }
 function updateLastBattle(dt) {
   const guards = state.bullies.filter(b => b.guard && b.state === 'walking').length;
-  const inFort = anyoneInFort();
   if (guards >= CONFIG.castleGuards) state.guardT = 2;          // a new one comes out of the Castle 2 s after one is hit
-  else if (!slots().every(sl => inLastFort(pl(sl))) && (state.guardT -= dt) <= 0) { addGuard(CONFIG.W, CONFIG.lastTop + 6, guards); state.guardT = 2; }
+  else if ((state.guardT -= dt) <= 0) { addGuard(CONFIG.W, CONFIG.lastTop + 6, guards); state.guardT = 2; }
   const live = state.bullies.filter(b => !b.guard && b.state === 'walking').length;
   if (state.lbWave < LB_WAVES) {
     if (state.lbLeft > 0) {
@@ -1003,29 +990,15 @@ function updateLastBattle(dt) {
     return;
   }
   if ((state.spawnTimer -= dt) > 0) return;       // the way is open: keep them coming at the Castle
-  if (inFort) {                                      // a boy in the fort: only Yetis, marching on it from the Castle
-    state.spawnTimer = rand(3, 4.5);
-    if (state.bullies.filter(b => b.type === 'yeti' && b.state === 'walking').length >= state.lastSel) return;
-    spawnLastYetis();
-    return;
-  }
   state.spawnTimer = rand(2, 3.2);
   if (live >= 10) return;
   if (++state.lastN % 12 === 0) spawnLastYetis(); else spawnBully();
 }
 
-// The barrier across the map while the next wave isn't beaten, and the fort at the Castle
+// The barrier across the map while the next wave isn't beaten
 function drawLastBarrier() {
   const y = Math.round(state.lbLimit) - 8;
   for (let x = 4; x < CONFIG.W * 2; x += 12) { rect(COLORS.shadow, x, y + 1, 9, 4); rect(COLORS.ice, x, y - 1, 9, 3); rect(COLORS.snow, x + 1, y - 2, 7, 2); }
-}
-function drawLastFort() {
-  const x0 = FORT_X0, x1 = FORT_X1, y0 = FORT_Y0, y1 = FORT_Y1, wall = (x, y, w, h) => { rect(COLORS.night, x - 1, y - 1, w + 2, h + 2); rect(COLORS.snow, x, y, w, h); rect(COLORS.shadow, x, y + h - 2, w, 2); };
-  rect(COLORS.ice, x0 + 6, y0 + 6, x1 - x0 - 12, y1 - y0 - 12);                          // trampled floor
-  wall(x0, y0, x1 - x0, 6);                                                                // back (north) wall
-  wall(x0, y0, 6, y1 - y0); wall(x1 - 6, y0, 6, y1 - y0);                                  // side walls
-  wall(x0, y1 - 6, 24, 6); wall(x1 - 24, y1 - 6, 24, 6);                                   // front wall with a doorway in the middle
-  for (let x = x0 + 4; x < x1 - 4; x += 10) wall(x, y0 - 4, 6, 4);                         // bumps along the top
 }
 
 const inCastle = s => Math.abs(s.x - CONFIG.W) <= 76 && s.y >= CONFIG.lastTop - 100 && s.y <= CONFIG.lastTop + 4;
@@ -1282,7 +1255,6 @@ function spawnBully(rtype, rx, ry) {   // rtype/rx/ry: place a specific enemy (a
     else y0 = view.h + T.halfH;
   }
   if (state.last && !rtype) y0 = Math.max(CONFIG.lastTop + 40, Math.min(-T.halfH, Math.min(...slots().map(q => pl(q).py)) - view.h / 2 - 24));   // Last Battle: they pour in from above the northernmost boy
-  if (state.last && !rtype && anyoneInFort()) { x0 = CONFIG.W + rand(-60, 60); y0 = CONFIG.lastTop + 34; }   // boy in the fort: they come out in front of him
   if (rtype) { x0 = rx; y0 = ry; }
   state.bullies.push({
     id: ++bullyId,
@@ -1579,7 +1551,7 @@ function updateHomeBully(b, T, dt) {          // true when it reaches the boy
   if (b.phase === 5 && b.y < wy - 1) b.phase = 4;
   b.vx = dt > 0 ? (b.x - px) / dt : 0; b.vy = dt > 0 ? (b.y - py) / dt : 0;
   footstep(b, T, px, py);
-  return b.phase >= 2 && cand.some(p => Math.hypot(b.x - p.px, b.y - p.py) <= 6 + T.radius && !inLastFort(p));
+  return b.phase >= 2 && cand.some(p => Math.hypot(b.x - p.px, b.y - p.py) <= 6 + T.radius);
 }
 
 function updateBullies(dt) {
@@ -1625,14 +1597,6 @@ function updateBullies(dt) {
     if (b.state === 'walking' && state.home) {
       if (updateHomeBully(b, T, dt)) { state.bullies.splice(i, 1); damageFort(T.fortDamage); }
       else if (state.last && !b.guard) {
-        if (anyoneInFort()) {
-          keepOutOfFort(b, T);
-          if (T.fortHit) {                                  // a Yeti pressed against the fort wall still hurts a boy inside: 1 damage, then a long gap
-            b.hitCd = Math.max(0, (b.hitCd || 0) - dt);
-            const r = T.radius + 2;
-            if (b.hitCd <= 0 && b.x >= FORT_X0 - r && b.x <= FORT_X1 + r && b.y >= FORT_Y0 - r && b.y <= FORT_Y1 + r) { b.hitCd = T.fortHit; damageFort(1); }
-          }
-        }
         for (const p of LAST_TREES) {                      // enemies walk around the trees, not through them
           const tx = p[0] + 4, ty = p[1] + CONFIG.treeBaseY, R = CONFIG.treeBaseRadius + T.radius, ddx = b.x - tx, ddy = b.y - ty, d = Math.hypot(ddx, ddy);
           if (d < R) { const nx = d > 0.01 ? ddx / d : 1, ny = d > 0.01 ? ddy / d : 0; b.x += nx * (R - d); b.y += ny * (R - d); b.x0 = b.x; }
@@ -1710,8 +1674,7 @@ function updateEnemyBalls(dt) {
       if (w && e.tgt === 'win') { w.hp = Math.max(0, w.hp - 1.5); puff(xc, wy); sfx('fort'); state.enemyBalls.splice(i, 1); continue; }
     }
     const hit = slots().map(pl).some(p => Math.hypot(e.x - p.px, e.y - p.py) <= 6);
-    const hitP = hit && slots().map(pl).find(p => Math.hypot(e.x - p.px, e.y - p.py) <= 6);
-    if (hit) { puff(e.x, e.y); state.enemyBalls.splice(i, 1); if (!inLastFort(hitP)) damageFort(1); }
+    if (hit) { puff(e.x, e.y); state.enemyBalls.splice(i, 1); damageFort(1); }
     else if (e.y > view.h + 10 || e.x < -10 || e.x > CONFIG.W * 2 + 10 || e.y < (state.last ? CONFIG.lastTop - 90 : -10)) state.enemyBalls.splice(i, 1);
   }
 }
