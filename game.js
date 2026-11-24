@@ -1834,10 +1834,17 @@ function gameOver() {
 }
 
 // Auto-pause when the tab is hidden
-document.addEventListener('visibilitychange', () => {
-  if (document.hidden && state.mode === 'playing' && !isCoop()) setMode('paused');
-  if (document.hidden && state.mode === 'battle' && state.battle && !state.battle.coop) state.battle.paused = true;   // co-op can't pause
-});
+function appAway() {                 // tab hidden, or the app sits in the iPhone app switcher: pause and silence it
+  if (state.mode === 'playing' && !isCoop()) setMode('paused');
+  if (state.mode === 'battle' && state.battle && !state.battle.coop) state.battle.paused = true;   // co-op can't pause
+  try { if (audio.ctx && audio.ctx.state === 'running') audio.ctx.suspend(); } catch (e) { /* ignore */ }
+}
+function appBack() { try { if (audio.ctx && audio.ctx.state === 'suspended') audio.ctx.resume(); } catch (e) { /* ignore */ } }
+document.addEventListener('visibilitychange', () => { if (document.hidden) appAway(); else appBack(); });
+window.addEventListener('pagehide', appAway);
+window.addEventListener('blur', appAway);
+window.addEventListener('focus', appBack);
+window.addEventListener('pageshow', appBack);
 
 // ---------- Co-op networking ----------
 const TYPE_IDS = Object.keys(CONFIG.bullyTypes);
