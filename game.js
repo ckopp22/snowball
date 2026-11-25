@@ -138,6 +138,7 @@ const CONFIG = {
   storageKey: 'snowball_bestwave',            // best wave reached (solo, per map)
   coopStorageKey: 'snowball_coop_bestwave',   // co-op has its own best wave
   runnerKey: 'snowball_runner',                 // highest Runner level unlocked (11 = all cleared)
+  defendKey: 'snowball_defend',                 // highest Defend level unlocked (11 = all cleared)
   lastLvKey: 'snowball_lastlv',                 // highest Last Battle badge (Yetis at the Castle) beaten
   lastDoneKey: 'snowball_lastdone',             // set once the Last Battle has been won
   homeLvKey: 'snowball_homelevels',             // highest Home level unlocked (11 = all cleared)
@@ -238,6 +239,7 @@ function saveProgress(p) {
 }
 
 function loadRunner() { return Math.max(1, Math.min(CONFIG.storyLevels + 1, loadBest(CONFIG.runnerKey))); }
+function loadDefend() { return Math.max(1, Math.min(CONFIG.storyLevels + 1, loadBest(CONFIG.defendKey))); }
 function loadHomeLv() { return Math.max(1, Math.min(CONFIG.storyLevels + 1, loadBest(CONFIG.homeLvKey))); }
 function loadStory() { return Math.max(1, Math.min(CONFIG.storyLevels + 1, loadBest(CONFIG.storyKey))); }
 
@@ -259,6 +261,7 @@ function kidPos(slot) {                        // (with the hop while hurt)
   return state.hurt > 0 ? { x: k.x, y: k.y - Math.round(Math.sin((1 - state.hurt / HURT_TIME) * Math.PI) * 4) } : k;
 }
 function kidBase(slot) {
+  if (state.defend) return { x: CONFIG.kidX, y: DEF.standY };
   if (state.runner || state.home) { const p = pl(slot); return { x: Math.round(p.px - 4), y: Math.round(p.py - 7) }; }
   return isCoop() ? { x: CONFIG.coopKidXs[slot], y: CONFIG.coopKidY } : { x: CONFIG.kidX, y: CONFIG.kidY };
 }
@@ -520,6 +523,9 @@ const state = {
   story: null,         // { level, last } while a Story level is running
   storyUnlocked: loadStory(),
   runnerUnlocked: loadRunner(),
+  defendUnlocked: loadDefend(),
+  defend: false,       // Defend level: enemies pop up in a building's windows, the boy ducks behind the fort
+  def: null,           // the running Defend level (see startDefendLevel)
   homeUnlocked: loadHomeLv(),
   lastDone: loadBest(CONFIG.lastDoneKey) > 0,
   lastLv: Math.max(loadBest(CONFIG.lastLvKey), loadBest(CONFIG.lastDoneKey) > 0 ? 1 : 0),   // badges beaten; the next one is unlocked
@@ -635,6 +641,7 @@ function throwSnowball(slot, auto, angle) {          // auto = machine-gun shot:
   });
   if (!auto) p.cooldown = CONFIG.throwCooldown;
   p.swing = CONFIG.armSwingTime;
+  if (state.defend) state.def.standT = DEF.standAfter;
   sfx('throw', slot === 1 && !auto);                  // the guest already played its own manual throw sound
 }
 
@@ -851,6 +858,7 @@ function update(dt) {
   state.time += dt;
   if (state.flash > 0) state.flash = Math.max(0, state.flash - dt);
   if (state.hurt > 0) state.hurt = Math.max(0, state.hurt - dt);
+  if (state.defend) { updateDefend(dt); return; }
 
   if (state.cooldown > 0) state.cooldown = Math.max(0, state.cooldown - dt);
   if (state.swing > 0) state.swing = Math.max(0, state.swing - dt);
@@ -946,7 +954,7 @@ function resetGame() {
   }
 }
 
-function setMode(m) { endAim(); state.stick = null; if (MENU_MODES.includes(m)) { state.runner = state.home = state.last = false; state.battle = null; } if (m === 'title' || m === 'wavesmenu') state.wantBattle = false; if (state.mode === 'paused' && m === 'playing') state.resumeAt = performance.now(); state.mode = m; }
+function setMode(m) { endAim(); state.stick = null; if (MENU_MODES.includes(m)) { state.runner = state.home = state.last = state.defend = false; state.battle = null; } if (m === 'title' || m === 'wavesmenu') state.wantBattle = false; if (state.mode === 'paused' && m === 'playing') state.resumeAt = performance.now(); state.mode = m; }
 
 // DEBUG (easy to remove): open index.html?wave=8 to start at wave 8
 const DEBUG_START_WAVE = parseInt(new URLSearchParams(location.search).get('wave'), 10) || 1;
@@ -1192,12 +1200,17 @@ function startHomeLevel(n) {              // Home level n: defend the house, cle
 }
 
 // Re-enter / leave the current story level, whichever page it belongs to
-const storyStart = (st, n) => (st.home ? startHomeLevel : st.runner ? startRunnerLevel : startStory)(n);
-const storyMenu = st => st.home ? 'homelevels' : st.runner ? 'runnerlevels' : 'levels';
+const storyStart = (st, n) => (st.defend ? startDefendLevel : st.home ? startHomeLevel : st.runner ? startRunnerLevel : startStory)(n);
+const storyMenu = st => st.defend ? 'defendlevels' : st.home ? 'homelevels' : st.runner ? 'runnerlevels' : 'levels';
 
 function storyWin() {
   awardXp(state.score);
-  if (state.story.home) {
+  if (state.story.defend) {
+    if (state.story.level >= state.defendUnlocked && state.defendUnlocked <= CONFIG.storyLevels) {
+      state.defendUnlocked = state.story.level + 1;
+      saveBest(state.defendUnlocked, CONFIG.defendKey);
+    }
+  } else if (state.story.home) {
     if (state.story.level >= state.homeUnlocked && state.homeUnlocked <= CONFIG.storyLevels) {
       state.homeUnlocked = state.story.level + 1;
       saveBest(state.homeUnlocked, CONFIG.homeLvKey);
@@ -1344,9 +1357,148 @@ function firstBullyHit(ax, ay, bx, by) {
   return hit ? { b: hit, t: hitT } : null;
 }
 
+// ---- Defend: enemies pop up in the windows of a building and lob snowballs; the boy is only exposed while standing ----
+const DEF = {
+  standY: 260,            // the boy's top-left y when he stands up to throw
+  duckY: 278,             // and when he is crouched behind the wall
+  standAfter: 0.35,       // s he stays up after letting go
+  hitY: 268,              // enemy snowballs land here
+  winW: 22, winH: 18,
+  top: 50, bottom: 232,   // the building's y range (top is pushed down by the safe area)
+  points: 20,
+  types: ['regular', 'runner', 'thrower', 'big'],
+  //       level:  1  2  3  4  5  6  7  8  9  10
+  rows:          [1, 1, 2, 2, 2, 3, 3, 3, 4, 4],
+  cols:          [2, 3, 2, 3, 4, 3, 3, 4, 4, 4],
+  atOnce:        [1, 1, 1, 2, 2, 2, 2, 3, 3, 3],
+  up: [2.8, 1.2],         // s an enemy stays up: level 1 -> level 10
+  rise: [0.35, 0.14],     // s to pop up or drop down
+  gap: [1.4, 0.5],        // s between pop-ups
+  ball: [60, 140],        // enemy snowball px/s
+};
+const defStanding = () => (state.aiming && state.aimValid) || state.def.standT > 0;
+
+function startDefendLevel(n) {
+  state.runner = state.home = false; state.defend = true;
+  resetGame();
+  state.mode = 'playing';
+  state.story = { level: n, defend: true };
+  const at = ([a, b]) => a + (b - a) * (n - 1) / (CONFIG.storyLevels - 1);
+  const rows = DEF.rows[n - 1], cols = DEF.cols[n - 1], top = DEF.top + view.safeTop;
+  const cw = 160 / cols, ch = (DEF.bottom - top) / rows, wins = [];
+  for (let r = 0; r < rows; r++)
+    for (let c = 0; c < cols; c++) wins.push({ x: Math.round(10 + cw * (c + 0.5) - DEF.winW / 2), y: Math.round(top + ch * (r + 0.5) - DEF.winH / 2) });
+  state.def = { wins, peeks: [], left: 6 + n, atOnce: DEF.atOnce[n - 1], up: at(DEF.up), rise: at(DEF.rise), gap: at(DEF.gap), ball: at(DEF.ball), timer: CONFIG.firstSpawnDelay, standT: 0, winT: 0 };
+  state.banner = CONFIG.bannerTime;
+  sfx('wave');
+  if (n === 1) state.tip = { lines: ['DUCK BEHIND THE FORT', 'PULL BACK TO STAND AND THROW'], t: 9 };
+}
+
+// How far out of the window an enemy is (0 hidden .. 1 fully up)
+const defOut = k => Math.max(0, Math.min(1, k.t / state.def.rise, (state.def.up + 2 * state.def.rise - k.t) / state.def.rise));
+const defMid = k => { const w = state.def.wins[k.win]; return { x: w.x + DEF.winW / 2, y: w.y + DEF.winH - 7 * defOut(k) }; };
+
+function updateDefend(dt) {
+  const d = state.def;
+  for (const k of ['cooldown', 'swing', 'banner']) if (state[k] > 0) state[k] = Math.max(0, state[k] - dt);
+  if (d.standT > 0) d.standT = Math.max(0, d.standT - dt);
+
+  for (let i = state.snowballs.length - 1; i >= 0; i--) {     // they fly over the building and only hit enemies that are up
+    const s = state.snowballs[i], px = s.x, py = s.y;
+    s.x += s.vx * dt; s.y += s.vy * dt;
+    const dx = s.x - px, dy = s.y - py, len2 = dx * dx + dy * dy;
+    let hit = null, hitT = Infinity;
+    for (const k of d.peeks) {
+      if (k.hit || defOut(k) < 0.5) continue;
+      const m = defMid(k), t = len2 ? Math.max(0, Math.min(1, ((m.x - px) * dx + (m.y - py) * dy) / len2)) : 0;
+      if (Math.hypot(px + dx * t - m.x, py + dy * t - m.y) <= CONFIG.snowballRadius + 7 && t < hitT) { hit = k; hitT = t; }
+    }
+    if (hit) {
+      const m = defMid(hit);
+      hit.hit = true; hit.fall = CONFIG.fallTime;
+      d.left--; state.score += DEF.points;
+      puff(m.x, m.y); sfx('hit');
+      state.snowballs.splice(i, 1);
+    } else if (s.x < -4 || s.x > CONFIG.W + 4 || s.y < -4) state.snowballs.splice(i, 1);
+  }
+
+  for (let i = d.peeks.length - 1; i >= 0; i--) {
+    const k = d.peeks[i];
+    if (k.hit) { if ((k.fall -= dt) <= 0) d.peeks.splice(i, 1); continue; }
+    k.t += dt;
+    if (!k.thrown && k.t >= d.rise + d.up * 0.5) {            // one snowball per pop-up, at the boy
+      k.thrown = true;
+      const m = defMid(k), a = Math.atan2(DEF.hitY - m.y, CONFIG.fortCX - m.x);
+      state.enemyBalls.push({ x: m.x, y: m.y, vx: Math.cos(a) * d.ball, vy: Math.sin(a) * d.ball });
+      sfx('throw');
+    }
+    if (k.t >= d.up + 2 * d.rise) d.peeks.splice(i, 1);
+  }
+
+  const live = d.peeks.filter(k => !k.hit).length;
+  if ((d.timer -= dt) <= 0 && live < Math.min(d.atOnce, d.left)) {
+    const free = d.wins.map((w, i) => i).filter(i => !d.peeks.some(k => k.win === i));
+    if (free.length) d.peeks.push({ win: free[Math.floor(Math.random() * free.length)], type: DEF.types[Math.floor(Math.random() * DEF.types.length)], t: 0, thrown: false, hit: false });
+    d.timer = d.gap;
+  }
+
+  for (let i = state.enemyBalls.length - 1; i >= 0; i--) {
+    const e = state.enemyBalls[i];
+    e.x += e.vx * dt; e.y += e.vy * dt;
+    if (e.y < DEF.hitY) continue;
+    puff(e.x, e.y);
+    state.enemyBalls.splice(i, 1);
+    if (defStanding()) { damageFort(1); if (state.mode !== 'playing') return; }
+    else sfx('tree');
+  }
+
+  updateParticles(dt);
+  if (state.tip && (state.tip.t -= dt) <= 0) state.tip = null;
+  if (d.left <= 0 && !d.peeks.length) {
+    if (!d.winT) { d.winT = 1.5; state.score += CONFIG.waveBonus; }
+    else if ((d.winT -= dt) <= 0) storyWin();
+  }
+}
+
+function drawBuilding() {
+  const top = DEF.top + view.safeTop - 8, bot = DEF.bottom + 8;
+  rect(COLORS.night, 3, top, 174, bot - top);
+  rect(COLORS.brown, 4, top + 1, 172, bot - top - 2);
+  ctx.globalAlpha = 0.25;
+  for (let y = top + 7; y < bot - 2; y += 7) rect(COLORS.black, 4, y, 172, 1);     // brick courses
+  ctx.globalAlpha = 1;
+  rect(COLORS.snow, 1, top - 5, 178, 6); rect(COLORS.ice, 1, top + 1, 178, 2);     // snowy roof
+  const W = DEF.winW, H = DEF.winH;
+  state.def.wins.forEach((w, i) => {
+    rect(COLORS.ice, w.x - 2, w.y - 2, W + 4, H + 4);
+    rect(COLORS.night, w.x, w.y, W, H);
+    for (const k of state.def.peeks) {
+      if (k.win !== i) continue;
+      ctx.save(); ctx.beginPath(); ctx.rect(w.x, w.y, W, H); ctx.clip();
+      const T = CONFIG.bullyTypes[k.type], L = LOOK[k.type];
+      const ox = w.x + Math.round((W - L.w) / 2), oy = w.y + H - Math.round(Math.min(H, T.halfH * 2) * (k.hit ? k.fall / CONFIG.fallTime : defOut(k)));
+      SPRITES[k.type]((c, x, y, rw, rh) => rect(k.hit ? COLORS.snow : c, ox + x, oy + y, rw, rh), 0, k);
+      ctx.restore();
+    }
+    rect(COLORS.snow, w.x - 3, w.y + H + 1, W + 6, 3);                             // sill
+  });
+}
+
+function drawDefendKid() {
+  if (defStanding()) { drawKid(0); drawArm(0); drawCooldownRing(0); drawAimLine(0); return; }
+  const x = CONFIG.kidX, y = DEF.duckY - breath(0), c = KID_COLORS[0];             // crouched: head and shoulders only
+  rect(COLORS.snow, x + 3, y, 2, 1);
+  rect(c.hat, x + 1, y + 1, 6, 2);
+  rect(COLORS.snow, x, y + 3, 8, 1);
+  rect(COLORS.skin, x + 1, y + 4, 6, 3);
+  rect(COLORS.black, x + 2, y + 5, 1, 1); rect(COLORS.black, x + 5, y + 5, 1, 1);
+  rect(c.scarf, x, y + 7, 8, 2);
+  rect(c.coat, x, y + 9, 8, 2);
+}
+
 // ---- Power-ups ----
 const rand = (a, b) => a + Math.random() * (b - a);
-const MENU_MODES = ['title', 'levels', 'wavesmenu', 'wavetype', 'coopmenu', 'coophost', 'coopjoin', 'cooplobby', 'runnerlevels', 'homelevels', 'runpan', 'battlemenu'];
+const MENU_MODES = ['title', 'levels', 'wavesmenu', 'wavetype', 'coopmenu', 'coophost', 'coopjoin', 'cooplobby', 'defendlevels', 'runnerlevels', 'homelevels', 'runpan', 'battlemenu'];
 
 // Segment-vs-circle; returns t (0..1 along the snowball's path this frame) or null
 function firstPowerHit(ax, ay, bx, by) {
@@ -2621,7 +2773,8 @@ function drawHud() {
     rect(COLORS.red, 70, 12, Math.max(1, Math.round(108 * state.castleHp / CONFIG.castleHp)), 9);
   }
   if (!state.last) drawText(state.story ? 'LEVEL ' + state.story.level : 'WAVE ' + state.wave, CONFIG.W / 2, 3, 1, COLORS.snow, 'center');
-  if (!state.last) drawText('BEST WAVE ' + Math.max(bestNow(), state.wave), CONFIG.W - 3, 3, 1, COLORS.snow, 'right');
+  if (state.defend) drawText('LEFT ' + state.def.left, CONFIG.W - 3, 3, 1, COLORS.snow, 'right');
+  else if (!state.last) drawText('BEST WAVE ' + Math.max(bestNow(), state.wave), CONFIG.W - 3, 3, 1, COLORS.snow, 'right');
   for (let i = 0; i < CONFIG.fortHealth; i++) drawFlake(3 + i * 6, 14, i < state.health);
   if (state.gun > 0) drawTextShadow('GUN ' + Math.ceil(state.gun), 3, 24, 1, COLORS.coatBlue);
 
@@ -2862,10 +3015,11 @@ function drawLevels() {
   button('BACK', CONFIG.W / 2, 70 + 5 * (h + 8) + 6, 76, 1, () => setMode('title'), COLORS.ice, 1);
 }
 
-// Level-select pages sit side by side: 0 Fort, 1 Runner, 2 Home. The boy runs between them.
-const PAGE_MODES = ['levels', 'runnerlevels', 'homelevels'];
+// Level-select pages sit side by side: 0 Fort, 1 Defend, 2 Runner, 3 Home. The boy runs between them.
+const PAGE_MODES = ['levels', 'defendlevels', 'runnerlevels', 'homelevels'];
 const RUN_T = 0.9, PAN_T = 1.0;   // seconds: boy runs off, then the screen pans to the next page
-const pageOpen = p => p === 0 ? state.storyUnlocked > CONFIG.storyLevels : p === 1 && state.runnerUnlocked > CONFIG.storyLevels;   // is the next page unlocked from page p
+const pageOpen = p => p === 0 ? state.storyUnlocked > CONFIG.storyLevels : p === 1 ? state.defendUnlocked > CONFIG.storyLevels || state.runnerUnlocked > 1   // (Runner progress from before Defend existed stays open)
+  : p === 2 && state.runnerUnlocked > CONFIG.storyLevels;   // is the next page unlocked from page p
 
 function startPan(from, to) { state.pan = { t: 0, from, to }; setMode('runpan'); }
 
@@ -2886,19 +3040,20 @@ function drawLevelPage(title, unlocked, start) {
   }
   button('BACK', CONFIG.W / 2, 70 + 5 * (h + 8) + 6, 76, 1, () => setMode('title'), COLORS.ice, 1);
 }
+const drawDefendLevels = () => drawLevelPage('DEFEND', state.defendUnlocked, startDefendLevel);
 const drawRunnerLevels = () => drawLevelPage('RUNNER', state.runnerUnlocked, startRunnerLevel);
 const drawHomeLevels = () => drawLevelPage('HOME', state.homeUnlocked, startHomeLevel);
 
 // The boy stands at the bottom of each page (the Fort page draws him itself); gold arrows beside him lead to the neighbouring pages
 function drawPageBoy(p) {
-  if (p === 1) drawKidAt(CONFIG.kidX, CONFIG.kidY, 0, breath(0), 0);   // Home page: the kid is drawn inside the house by the normal pass
-  const by = (p === 2 ? homeBoyY() : CONFIG.kidY) + 7;
+  if (p === 2) drawKidAt(CONFIG.kidX, CONFIG.kidY, 0, breath(0), 0);   // Home page: the kid is drawn inside the house by the normal pass
+  const by = (p === 3 ? homeBoyY() : CONFIG.kidY) + 7;
   if (p > 0) {
     const bx = CONFIG.kidX - 38;
     button('', bx, by, 28, 1, () => startPan(p, p - 1), COLORS.gold, 1);
     for (let i = 0; i < 5; i++) rect(COLORS.night, bx + 5 - i * 2 - 1, by - (5 - i), 2, 10 - i * 2);   // left-pointing triangle
   }
-  if (p === 2 && state.homeUnlocked > CONFIG.storyLevels)       // all Home levels cleared: the final level opens, bottom right of the house
+  if (p === 3 && state.homeUnlocked > CONFIG.storyLevels)       // all Home levels cleared: the final level opens, bottom right of the house
   {
     state.lastSel = Math.min(state.lastSel, state.lastLv + 1);
     const bh = button('LAST', CONFIG.W - 3 - 30, by, 60, 1.3, startLastBattle, COLORS.red, 1, 'BATTLE'), cx = CONFIG.W - 33, t = performance.now() / 1000;
@@ -2930,18 +3085,18 @@ function drawPageBoy(p) {
 function drawRunPan() {
   const { t, from, to } = state.pan, W = CONFIG.W, k = Math.min(1, Math.max(0, (t - RUN_T) / PAN_T)), e = k * k * (3 - 2 * k);
   const cam = Math.round((from + (to - from) * e) * W);
-  for (let p = 0; p < 3; p++) ctx.drawImage(bg, p * W - cam, 0);
+  for (let p = 0; p < 4; p++) ctx.drawImage(bg, p * W - cam, 0);
   drawFlakes();
-  for (let p = 0; p < 2; p++) { ctx.save(); ctx.translate(p * W - cam, 0); drawTreesAndBullies(); if (p === 0) drawFort(); ctx.restore(); }
-  homeFresh(); state.home = true;                          // page 2 is the house (camera 90 centres it on the door, as on the Home page)
-  ctx.save(); ctx.beginPath(); ctx.rect(2 * W - cam, 0, W, view.h + 16); ctx.clip();   // keep the house inside its own page so it never overlaps the Runner page
-  ctx.translate(2 * W - cam - W / 2, 0); drawHome(); ctx.restore();
+  for (let p = 0; p < 3; p++) { ctx.save(); ctx.translate(p * W - cam, 0); drawTreesAndBullies(); if (p < 2) drawFort(); ctx.restore(); }
+  homeFresh(); state.home = true;                          // page 3 is the house (camera 90 centres it on the door, as on the Home page)
+  ctx.save(); ctx.beginPath(); ctx.rect(3 * W - cam, 0, W, view.h + 16); ctx.clip();   // keep the house inside its own page so it never overlaps the Runner page
+  ctx.translate(3 * W - cam - W / 2, 0); drawHome(); ctx.restore();
   state.home = false;
   // One boy runs the whole way (world x), so he never stops or swaps with a second boy
   const u = Math.min(1, t / (RUN_T + PAN_T)), x0 = from * W + CONFIG.kidX, x1 = to * W + CONFIG.kidX;
-  const ky = p => p === 2 ? homeBoyY() : CONFIG.kidY;
+  const ky = p => p === 3 ? homeBoyY() : CONFIG.kidY;
   drawKidAt(Math.round(x0 + (x1 - x0) * u) - cam, Math.round(ky(from) + (ky(to) - ky(from)) * u), 0, 0, 1 + (Math.floor(t * 10) % 2));
-  for (const [p, fn] of [[1, drawRunnerLevels], [2, drawHomeLevels]]) { ctx.save(); ctx.translate(p * W - cam, 0); withInset(fn); ctx.restore(); }
+  for (const [p, fn] of [[1, drawDefendLevels], [2, drawRunnerLevels], [3, drawHomeLevels]]) { ctx.save(); ctx.translate(p * W - cam, 0); withInset(fn); ctx.restore(); }
   state.buttons = [];
 }
 
@@ -3062,7 +3217,7 @@ function drawGameOver() {
   dim();
   drawTextShadow('GAME OVER', CONFIG.W / 2, 50, 3, COLORS.snow, 'center');
   drawTextShadow('SCORE: ' + state.score, CONFIG.W / 2, 92, 2, COLORS.snow, 'center');
-  drawTextShadow('BEST WAVE: ' + bestNow(), CONFIG.W / 2, 112, 2, COLORS.snow, 'center');
+  if (!state.defend) drawTextShadow('BEST WAVE: ' + bestNow(), CONFIG.W / 2, 112, 2, COLORS.snow, 'center');
   if (state.newBest) drawTextShadow('NEW BEST!', CONFIG.W / 2, 136, 2, COLORS.gold, 'center');
   if (state.lastXp > 0) drawText5('+' + state.lastXp + ' TO YOUR LEVEL BAR', CONFIG.W / 2, 160, 1, COLORS.snow, 'center', COLORS.night);
   if (net.role === 'guest') drawTextShadow('WAITING FOR HOST...', CONFIG.W / 2, 184, 1, COLORS.snow, 'center');
@@ -3080,6 +3235,7 @@ function drawShadow() {
   ctx.globalAlpha = CONFIG.shadowAlpha;
   if (!state.runner && !state.home && state.mode !== 'runnerlevels' && state.mode !== 'homelevels') ctx.drawImage(fortShadow, ox, oy);
   for (const sl of slots()) {
+    if (state.defend && !defStanding()) break;
     const k = kidPos(sl), x = k.x + ox, y = k.y + oy;
     rect(COLORS.night, x + 1, y, 6, 7);            // hat and head
     rect(COLORS.night, x, y + 7, 8, 6);            // scarf and coat
@@ -3182,6 +3338,7 @@ function drawFrame() {
   drawFlakes();
   if (cut) { drawCutscene(); if (shaking) ctx.restore(); drawCelebration(); return; }
   if (state.home) { ctx.save(); ctx.translate(-Math.round(state.camX), -Math.round(state.camY)); }
+  if (state.defend) drawBuilding();
   drawShadow();
   drawPrints();
   drawHome();
@@ -3191,10 +3348,13 @@ function drawFrame() {
   drawAvalanche();
   const away = state.mode === 'runnerlevels';   // the fort and boy are left behind on the Runner screen
   if (!state.runner && !state.home && !away) drawFort();
-  if (!away) for (const sl of slots()) drawKid(sl);
-  for (const sl of slots()) drawArm(sl);
-  for (const sl of slots()) drawCooldownRing(sl);
-  for (const sl of slots()) drawAimLine(sl);
+  if (state.defend) drawDefendKid();
+  else {
+    if (!away) for (const sl of slots()) drawKid(sl);
+    for (const sl of slots()) drawArm(sl);
+    for (const sl of slots()) drawCooldownRing(sl);
+    for (const sl of slots()) drawAimLine(sl);
+  }
   for (const s of state.snowballs) drawSnowball(s);
   for (const e of state.enemyBalls) drawEnemyBall(e);
   drawParticles();
@@ -3203,8 +3363,9 @@ function drawFrame() {
   drawStick();
   drawWinAlerts();
   if (state.mode === 'title') { drawLevelUi(); withInset(drawTitle); }
-  else if (state.mode === 'runnerlevels') { withInset(drawRunnerLevels); drawPageBoy(1); }
-  else if (state.mode === 'homelevels') { withInset(drawHomeLevels); drawPageBoy(2); }
+  else if (state.mode === 'runnerlevels') { withInset(drawRunnerLevels); drawPageBoy(2); }
+  else if (state.mode === 'defendlevels') { withInset(drawDefendLevels); drawPageBoy(1); }
+  else if (state.mode === 'homelevels') { withInset(drawHomeLevels); drawPageBoy(3); }
   else if (state.mode === 'levels') { withInset(drawLevels); drawPageBoy(0); }
   else if (state.mode === 'wavesmenu') withInset(drawWavesMenu);
   else if (state.mode === 'wavetype') withInset(drawWaveType);
