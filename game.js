@@ -1014,9 +1014,9 @@ function updateLastBattle(dt) {
     }
     return;
   }
-  const yetis = state.bullies.filter(b => b.type === 'yeti' && b.state === 'walking').length;   // the way is open: always keep the chosen number of Yetis out, a new one 2 s after one falls
-  if (yetis >= state.lastSel) state.yetiT = 2;
-  else if ((state.yetiT = (state.yetiT ?? 2) - dt) <= 0) { state.yetiLeft = 1; state.toSpawn = 1; spawnBully(); state.yetiT = 2; }
+  const yetis = state.bullies.filter(b => b.type === 'yeti' && b.state === 'walking').length;   // the way is open: always keep the chosen number of Yetis out, a new one 6 s after one falls
+  if (yetis >= state.lastSel) state.yetiT = 6;
+  else if ((state.yetiT = (state.yetiT ?? 2) - dt) <= 0) { state.yetiLeft = 1; state.toSpawn = 1; spawnBully(); state.yetiT = 6; }
   if ((state.spawnTimer -= dt) > 0) return;       // keep them coming at the Castle
   state.spawnTimer = rand(2, 3.2);
   if (live - yetis >= 10) return;
