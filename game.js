@@ -641,7 +641,6 @@ function throwSnowball(slot, auto, angle) {          // auto = machine-gun shot:
   });
   if (!auto) p.cooldown = CONFIG.throwCooldown;
   p.swing = CONFIG.armSwingTime;
-  if (state.defend) state.def.standT = DEF.standAfter;
   sfx('throw', slot === 1 && !auto);                  // the guest already played its own manual throw sound
 }
 
@@ -1361,7 +1360,6 @@ function firstBullyHit(ax, ay, bx, by) {
 const DEF = {
   standY: 260,            // the boy's top-left y when he stands up to throw
   duckY: 278,             // and when he is crouched behind the wall
-  standAfter: 0.35,       // s he stays up after letting go
   hitY: 268,              // enemy snowballs land here
   winW: 22, winH: 18,
   top: 50, bottom: 232,   // the building's y range (top is pushed down by the safe area)
@@ -1376,7 +1374,7 @@ const DEF = {
   gap: [1.4, 0.5],        // s between pop-ups
   ball: [60, 140],        // enemy snowball px/s
 };
-const defStanding = () => (state.aiming && state.aimValid) || state.def.standT > 0;
+const defStanding = () => state.aiming && state.aimValid;   // he ducks the moment the finger lifts
 
 function startDefendLevel(n) {
   state.runner = state.home = false; state.defend = true;
@@ -1388,7 +1386,7 @@ function startDefendLevel(n) {
   const cw = 160 / cols, ch = (DEF.bottom - top) / rows, wins = [];
   for (let r = 0; r < rows; r++)
     for (let c = 0; c < cols; c++) wins.push({ x: Math.round(10 + cw * (c + 0.5) - DEF.winW / 2), y: Math.round(top + ch * (r + 0.5) - DEF.winH / 2) });
-  state.def = { wins, peeks: [], left: 6 + n, atOnce: DEF.atOnce[n - 1], up: at(DEF.up), rise: at(DEF.rise), gap: at(DEF.gap), ball: at(DEF.ball), timer: CONFIG.firstSpawnDelay, standT: 0, winT: 0 };
+  state.def = { wins, peeks: [], left: 6 + n, atOnce: DEF.atOnce[n - 1], up: at(DEF.up), rise: at(DEF.rise), gap: at(DEF.gap), ball: at(DEF.ball), timer: CONFIG.firstSpawnDelay, winT: 0 };
   state.banner = CONFIG.bannerTime;
   sfx('wave');
   if (n === 1) state.tip = { lines: ['DUCK BEHIND THE FORT', 'PULL BACK TO STAND AND THROW'], t: 9 };
@@ -1401,7 +1399,6 @@ const defMid = k => { const w = state.def.wins[k.win]; return { x: w.x + DEF.win
 function updateDefend(dt) {
   const d = state.def;
   for (const k of ['cooldown', 'swing', 'banner']) if (state[k] > 0) state[k] = Math.max(0, state[k] - dt);
-  if (d.standT > 0) d.standT = Math.max(0, d.standT - dt);
 
   for (let i = state.snowballs.length - 1; i >= 0; i--) {     // they fly over the building and only hit enemies that are up
     const s = state.snowballs[i], px = s.x, py = s.y;
