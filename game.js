@@ -3308,11 +3308,8 @@ function draw() {
   if (hv) state.home = false;
 }
 
-// Last Battle camera: follows the boy up the map with him mid-screen; nearer the Castle it eases over to a view with the boy low on the screen (like the Fort levels) and the Castle above him
-function lbCamY(py) {
-  const t = Math.max(0, Math.min(1, (CONFIG.lastTop + 300 - py) / 150));
-  return Math.min(0, (py - view.h / 2) * (1 - t) + (py - (view.h - 80)) * t);
-}
+// Last Battle camera: follows the boy up the map, keeping him mid-screen all the way to the Castle
+const lbCamY = py => Math.min(0, py - view.h / 2);
 const castleOnScreen = owner => lbCamY(pl(owner).py) < CONFIG.lastTop - 20;   // only counts while the shooter can see the Castle
 
 function drawFrame() {
