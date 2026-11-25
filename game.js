@@ -2848,7 +2848,9 @@ function drawPowerAt(px, py, age) {
 function drawTip() {                       // level-1 how-to-play hint
   if (!state.tip || state.mode !== 'playing') return;
   ctx.globalAlpha = Math.min(1, state.tip.t / 0.6);
-  state.tip.lines.forEach((l, i) => drawTextShadow(l, CONFIG.W / 2, 160 + i * 12, 1, COLORS.snow, 'center'));
+  const lines = state.tip.lines.flatMap(l => l.match(/.{1,26}(?= |$)/g).map(t => t.trim()));   // wrapped so the bigger font fits
+  rect(COLORS.night, 6, 154, CONFIG.W - 12, lines.length * 12 + 7);                              // solid panel: readable over snow
+  lines.forEach((l, i) => drawText5(l, CONFIG.W / 2, 160 + i * 12, 1, COLORS.snow, 'center'));
   ctx.globalAlpha = 1;
 }
 function drawPopup() {
