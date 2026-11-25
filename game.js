@@ -1476,6 +1476,9 @@ function drawBuilding() {
       const ox = w.x + Math.round((W - L.w) / 2), oy = w.y + H - Math.round(Math.min(H, T.halfH * 2) * (k.hit ? k.fall / CONFIG.fallTime : defOut(k)));
       SPRITES[k.type]((c, x, y, rw, rh) => rect(k.hit ? COLORS.snow : c, ox + x, oy + y, rw, rh), 0, k);
       ctx.restore();
+      if (!k.hit && defOut(k) < 0.25) {                                            // ducked: a sliver of their back still shows
+        rect(L.coat, ox + 2, w.y + H - 3, L.w - 4, 1); rect(L.coat, ox, w.y + H - 2, L.w, 3);
+      }
     }
     rect(COLORS.snow, w.x - 3, w.y + H + 1, W + 6, 3);                             // sill
   });
