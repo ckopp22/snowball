@@ -1371,7 +1371,7 @@ const DEF = {
   atOnce:        [1, 1, 1, 2, 2, 2, 2, 3, 3, 3],
   up: [2.8, 1.2],         // s an enemy stays up: level 1 -> level 10
   rise: [0.35, 0.14],     // s to pop up or drop down
-  gap: [1.4, 0.5],        // s between pop-ups
+  gap: [1.4, 0.5],        // s an enemy stays hidden, and before a replacement arrives
   ball: [60, 140],        // enemy snowball px/s
 };
 const defStanding = () => state.aiming && state.aimValid;   // he ducks the moment the finger lifts
@@ -1413,7 +1413,7 @@ function updateDefend(dt) {
     if (hit) {
       const m = defMid(hit);
       hit.hit = true; hit.fall = CONFIG.fallTime;
-      d.left--; state.score += DEF.points;
+      d.left--; state.score += DEF.points; d.timer = Math.max(d.timer, d.gap);
       puff(m.x, m.y); sfx('hit');
       state.snowballs.splice(i, 1);
     } else if (s.x < -4 || s.x > CONFIG.W + 4 || s.y < -4) state.snowballs.splice(i, 1);
@@ -1429,7 +1429,7 @@ function updateDefend(dt) {
       state.enemyBalls.push({ x: m.x, y: m.y, vx: Math.cos(a) * d.ball, vy: Math.sin(a) * d.ball });
       sfx('throw');
     }
-    if (k.t >= d.up + 2 * d.rise) d.peeks.splice(i, 1);
+    if (k.t >= d.up + 2 * d.rise) { k.t = -d.gap; k.thrown = false; }   // ducks, then pops up in the same window until knocked out
   }
 
   const live = d.peeks.filter(k => !k.hit).length;
